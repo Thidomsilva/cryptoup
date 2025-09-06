@@ -133,13 +133,13 @@ export async function POST(request: NextRequest) {
                 const helpMessage = `
 *Bem-vindo ao Bot de Simulação de Arbitragem USDT/BRL!*
 
-Você pode usar os comandos em um chat privado comigo ou em um grupo onde eu fui adicionado.
+Você pode me usar em um chat privado ou em um grupo.
 
 *Comandos disponíveis:*
-- \`/cotap <valor>\`: Simula uma operação de arbitragem. O resultado é enviado aqui e também postado no canal ${CHANNEL_ID}.
+- \`/cotap <valor>\`: Simula uma operação de arbitragem. A resposta será enviada aqui e também postada no canal ${CHANNEL_ID}.
   _Exemplo: \`/cotap 5000\`_
   
-- \`/setpicnic <preço>\`: Define o preço de venda do USDT na Picnic para as simulações.
+- \`/setpicnic <preço>\`: Define o preço de venda do USDT na Picnic para as simulações. Este valor é temporário.
   _Exemplo: \`/setpicnic 5.28\`_
 
 - \`/help\`: Mostra esta mensagem de ajuda.
