@@ -1,6 +1,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
-import TelegramBot from 'node-telegram-bot-api';
+import TelegramBot, { Update } from 'node-telegram-bot-api';
 import { getUsdtBrlPrices, runSimulation } from '@/app/actions';
 import type { Exchange, SimulationResult, ExchangeDetails } from '@/lib/types';
 import { BinanceIcon } from '@/components/icons/binance-icon';
@@ -66,22 +66,8 @@ async function formatResults(results: SimulationResult[], amount: number, curren
     return message;
 }
 
-// --- Handler do Webhook ---
-export async function POST(request: NextRequest) {
-    try {
-        const body = await request.json();
-        bot.processUpdate(body);
-        return NextResponse.json({ status: 'ok' });
-
-    } catch (error) {
-        console.error('Erro no webhook do Telegram:', error);
-        return NextResponse.json({ status: 'error', message: 'Internal server error' });
-    }
-}
-
 // --- Comandos do Bot ---
-bot.onText(/\/start|\/help/, (msg) => {
-    const chatId = msg.chat.id;
+const handleHelpCommand = async (chatId: number) => {
     const helpMessage = `
 *Bem-vindo ao Bot de Simulação de Arbitragem USDT/BRL!*
 
@@ -96,15 +82,20 @@ Você pode usar os comandos em um chat privado comigo ou em um grupo onde eu fui
 
 - \`/help\`: Mostra esta mensagem de ajuda.
     `;
-    bot.sendMessage(chatId, helpMessage, { parse_mode: 'Markdown' });
-});
+    await bot.sendMessage(chatId, helpMessage, { parse_mode: 'Markdown' });
+};
 
-bot.onText(/\/cotap (.+)/, async (msg, match) => {
-    const chatId = msg.chat.id;
-    const amount = parseFloat(match![1]);
+const handleCotaPCommand = async (chatId: number, text: string) => {
+    const match = text.match(/\/cotap (.+)/);
+    if (!match || !match[1]) {
+        await bot.sendMessage(chatId, "Comando inválido. Use o formato: `/cotap <valor>`");
+        return;
+    }
+    
+    const amount = parseFloat(match[1]);
 
     if (isNaN(amount) || amount <= 0) {
-        bot.sendMessage(chatId, "Valor inválido. Use, por exemplo: `/cotap 5000`");
+        await bot.sendMessage(chatId, "Valor inválido. Use, por exemplo: `/cotap 5000`");
         return;
     }
 
@@ -124,11 +115,10 @@ bot.onText(/\/cotap (.+)/, async (msg, match) => {
         const results = await runSimulation(amount, exchangeRates, picnicPrice);
         const responseMessage = await formatResults(results, amount, picnicPrice);
         
-        // Envia a resposta para o usuário que pediu
         await bot.sendMessage(chatId, responseMessage, { parse_mode: 'Markdown' });
         
-        // Se o comando não foi executado no próprio canal, envia para o canal também
-        if (chatId.toString() !== CHANNEL_ID.replace('@', '')) {
+        const channelChatId = await bot.getChat(CHANNEL_ID).then(chat => chat.id).catch(() => null);
+        if (channelChatId && chatId !== channelChatId) {
              await bot.sendMessage(CHANNEL_ID, responseMessage, { parse_mode: 'Markdown' });
         }
     } catch (error) {
@@ -136,20 +126,51 @@ bot.onText(/\/cotap (.+)/, async (msg, match) => {
         const errorMsg = "❌ Erro: Não foi possível buscar as cotações. As APIs podem estar indisponíveis. Tente novamente mais tarde.";
         await bot.sendMessage(chatId, errorMsg);
     }
-});
+};
 
-bot.onText(/\/setpicnic (.+)/, async (msg, match) => {
-    const chatId = msg.chat.id;
-    const price = parseFloat(match![1]);
+const handleSetPicnicCommand = async (chatId: number, text: string) => {
+    const match = text.match(/\/setpicnic (.+)/);
+    if (!match || !match[1]) {
+        await bot.sendMessage(chatId, "Comando inválido. Use o formato: `/setpicnic <preço>`");
+        return;
+    }
+
+    const price = parseFloat(match[1]);
 
      if (isNaN(price) || price <= 0) {
-        bot.sendMessage(chatId, "Preço inválido. Use, por exemplo: `/setpicnic 5.28`");
+        await bot.sendMessage(chatId, "Preço inválido. Use, por exemplo: `/setpicnic 5.28`");
         return;
     }
     picnicPrice = price;
     const successMsg = `✅ Preço de venda na Picnic atualizado para *${price.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}*.`;
     await bot.sendMessage(chatId, successMsg, { parse_mode: 'Markdown' });
-});
+};
+
+
+// --- Handler do Webhook ---
+export async function POST(request: NextRequest) {
+    try {
+        const body: Update = await request.json();
+
+        if (body.message && body.message.text) {
+            const { chat: { id: chatId }, text } = body.message;
+
+            if (text.startsWith('/start') || text.startsWith('/help')) {
+                await handleHelpCommand(chatId);
+            } else if (text.startsWith('/cotap')) {
+                await handleCotaPCommand(chatId, text);
+            } else if (text.startsWith('/setpicnic')) {
+                await handleSetPicnicCommand(chatId, text);
+            }
+        }
+        
+        return NextResponse.json({ status: 'ok' });
+
+    } catch (error) {
+        console.error('Erro no webhook do Telegram:', error);
+        return NextResponse.json({ status: 'error', message: 'Internal server error' });
+    }
+}
 
 
 // Rota GET para registrar o webhook (chame isso uma vez)
