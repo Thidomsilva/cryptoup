@@ -63,14 +63,16 @@ export async function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
             fetch('https://api.coingecko.com/api/v3/coins/tether/tickers?per_page=200')
         ]);
         
+        const allExchangeNames: ExchangeName[] = ['Binance', 'Bybit', 'KuCoin', 'Coinbase'];
+
         if (!brlToUsdRate) {
             console.error("FATAL: BRL/USD conversion rate is not available. Cannot calculate prices.");
-            return []; // Cannot proceed without a conversion rate
+            return allExchangeNames.map(name => ({ name, buyPrice: null }));
         }
         
         if (!tetherResponse.ok) {
             console.error('Failed to fetch from CoinGecko API:', tetherResponse.status, tetherResponse.statusText);
-            return [];
+            return allExchangeNames.map(name => ({ name, buyPrice: null }));
         }
 
         const data = await tetherResponse.json();
@@ -78,10 +80,10 @@ export async function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
 
         if (!tickers || !Array.isArray(tickers)) {
             console.error('CoinGecko API returned invalid tickers data.');
-            return [];
+            return allExchangeNames.map(name => ({ name, buyPrice: null }));
         }
 
-        const allExchangeNames: ExchangeName[] = ['Binance', 'Bybit', 'KuCoin', 'Coinbase'];
+        
         // Store the best price found for each exchange. Priority is 1 for BRL pairs, 0 for USD pairs.
         const prices: { [K in ExchangeName]?: { price: number, priority: number } } = {};
 
@@ -104,7 +106,7 @@ export async function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
                 }
                 // Fallback to USD-based pairs for conversion.
                 // Sanity check to ensure it's a stablecoin pair (price close to 1).
-                else if (ticker.base.toUpperCase() === 'USDT' && (ticker.target.toUpperCase() === 'USDT' || ticker.target.toUpperCase() === 'USD') && ticker.last > 0.9 && ticker.last < 1.1) {
+                else if (ticker.base.toUpperCase() === 'USDT' && ['USDT', 'USD'].includes(ticker.target.toUpperCase()) && ticker.last > 0.9 && ticker.last < 1.1) {
                     currentPrice = ticker.last * brlToUsdRate;
                     priority = 0; // Lower priority for converted USD
                 }
@@ -132,6 +134,7 @@ export async function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
 
     } catch (error) {
         console.error('Error fetching or processing cryptocurrency prices:', error);
-        return [];
+        const allExchangeNames: ExchangeName[] = ['Binance', 'Bybit', 'KuCoin', 'Coinbase'];
+        return allExchangeNames.map(name => ({ name, buyPrice: null }));
     }
 }
