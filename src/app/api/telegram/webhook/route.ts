@@ -67,14 +67,15 @@ async function formatResults(results: SimulationResult[], amount: number, curren
 }
 
 // --- Comandos do Bot ---
-const handleHelpCommand = async (chatId: number) => {
+bot.onText(/\/(start|help)/, async (msg) => {
+    const chatId = msg.chat.id;
     const helpMessage = `
 *Bem-vindo ao Bot de Simulação de Arbitragem USDT/BRL!*
 
-Você pode usar os comandos em um chat privado comigo ou em um grupo onde eu fui adicionado.
+Você pode usar os comandos em um chat privado comigo ou em um grupo onde eu fui adicionado. A análise será sempre postada no canal ${CHANNEL_ID}.
 
 *Comandos disponíveis:*
-- \`/cotap <valor>\`: Simula a operação. A resposta será enviada aqui e também postada no canal ${CHANNEL_ID}.
+- \`/cotap <valor>\`: Simula a operação. A resposta será enviada no chat onde o comando foi executado e também postada no canal.
   _Exemplo: \`/cotap 5000\`_
   
 - \`/setpicnic <preço>\`: Define o preço de venda do USDT na Picnic para as simulações.
@@ -83,10 +84,10 @@ Você pode usar os comandos em um chat privado comigo ou em um grupo onde eu fui
 - \`/help\`: Mostra esta mensagem de ajuda.
     `;
     await bot.sendMessage(chatId, helpMessage, { parse_mode: 'Markdown' });
-};
+});
 
-const handleCotaPCommand = async (chatId: number, text: string) => {
-    const match = text.match(/\/cotap (.+)/);
+bot.onText(/\/cotap (.+)/, async (msg, match) => {
+    const chatId = msg.chat.id;
     if (!match || !match[1]) {
         await bot.sendMessage(chatId, "Comando inválido. Use o formato: `/cotap <valor>`");
         return;
@@ -115,21 +116,25 @@ const handleCotaPCommand = async (chatId: number, text: string) => {
         const results = await runSimulation(amount, exchangeRates, picnicPrice);
         const responseMessage = await formatResults(results, amount, picnicPrice);
         
+        // Responde no chat de origem
         await bot.sendMessage(chatId, responseMessage, { parse_mode: 'Markdown' });
         
-        const channelChatId = await bot.getChat(CHANNEL_ID).then(chat => chat.id).catch(() => null);
-        if (channelChatId && chatId !== channelChatId) {
+        // Posta no canal, se o comando não foi enviado do próprio canal
+        const channelChat = await bot.getChat(CHANNEL_ID).catch(() => null);
+        if (channelChat && chatId !== channelChat.id) {
              await bot.sendMessage(CHANNEL_ID, responseMessage, { parse_mode: 'Markdown' });
         }
+
     } catch (error) {
         console.error("Erro ao processar /cotap:", error);
         const errorMsg = "❌ Erro: Não foi possível buscar as cotações. As APIs podem estar indisponíveis. Tente novamente mais tarde.";
         await bot.sendMessage(chatId, errorMsg);
     }
-};
+});
 
-const handleSetPicnicCommand = async (chatId: number, text: string) => {
-    const match = text.match(/\/setpicnic (.+)/);
+
+bot.onText(/\/setpicnic (.+)/, async (msg, match) => {
+    const chatId = msg.chat.id;
     if (!match || !match[1]) {
         await bot.sendMessage(chatId, "Comando inválido. Use o formato: `/setpicnic <preço>`");
         return;
@@ -144,28 +149,15 @@ const handleSetPicnicCommand = async (chatId: number, text: string) => {
     picnicPrice = price;
     const successMsg = `✅ Preço de venda na Picnic atualizado para *${price.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}*.`;
     await bot.sendMessage(chatId, successMsg, { parse_mode: 'Markdown' });
-};
+});
 
 
 // --- Handler do Webhook ---
 export async function POST(request: NextRequest) {
     try {
         const body: Update = await request.json();
-
-        if (body.message && body.message.text) {
-            const { chat: { id: chatId }, text } = body.message;
-
-            if (text.startsWith('/start') || text.startsWith('/help')) {
-                await handleHelpCommand(chatId);
-            } else if (text.startsWith('/cotap')) {
-                await handleCotaPCommand(chatId, text);
-            } else if (text.startsWith('/setpicnic')) {
-                await handleSetPicnicCommand(chatId, text);
-            }
-        }
-        
+        bot.processUpdate(body);
         return NextResponse.json({ status: 'ok' });
-
     } catch (error) {
         console.error('Erro no webhook do Telegram:', error);
         return NextResponse.json({ status: 'error', message: 'Internal server error' });
