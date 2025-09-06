@@ -9,14 +9,14 @@ import { KucoinIcon } from '@/components/icons/kucoin-icon';
 import { CoinbaseIcon } from '@/components/icons/coinbase-icon';
 
 // --- Configuração ---
-const token = "8208024793:AAH_kdUGpNG5q-LQ_iOJfxZP0fDiSDGcjFU";
-const CHANNEL_ID = '@upsurechanel'; // ID do canal de destino
+const token = process.env.TELEGRAM_BOT_TOKEN;
 
 if (!token) {
     throw new Error('O token do Telegram não foi configurado. Por favor, defina TELEGRAM_BOT_TOKEN no seu .env');
 }
 
 const bot = new TelegramBot(token);
+const CHANNEL_ID = '@upsurechanel'; // ID do canal de destino
 
 const EXCHANGES: ExchangeDetails[] = [
     { name: 'Binance', fee: 0.001, icon: BinanceIcon },
@@ -85,13 +85,13 @@ bot.onText(/\/start|\/help/, (msg) => {
     const helpMessage = `
 *Bem-vindo ao Bot de Simulação de Arbitragem USDT/BRL!*
 
-Você pode me usar em um chat privado ou em um grupo.
+Você pode usar os comandos em um chat privado comigo ou em um grupo onde eu fui adicionado.
 
 *Comandos disponíveis:*
-- \`/cotap <valor>\`: Simula uma operação de arbitragem. A resposta será enviada aqui e também postada no canal ${CHANNEL_ID}.
+- \`/cotap <valor>\`: Simula a operação. A resposta será enviada aqui e também postada no canal ${CHANNEL_ID}.
   _Exemplo: \`/cotap 5000\`_
   
-- \`/setpicnic <preço>\`: Define o preço de venda do USDT na Picnic para as simulações. Este valor é temporário.
+- \`/setpicnic <preço>\`: Define o preço de venda do USDT na Picnic para as simulações.
   _Exemplo: \`/setpicnic 5.28\`_
 
 - \`/help\`: Mostra esta mensagem de ajuda.
@@ -108,7 +108,7 @@ bot.onText(/\/cotap (.+)/, async (msg, match) => {
         return;
     }
 
-    bot.sendMessage(chatId, `🔍 Buscando cotações para ${amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}...`);
+    await bot.sendMessage(chatId, `🔍 Buscando cotações para ${amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}...`);
 
     try {
         const prices = await getUsdtBrlPrices();
@@ -160,6 +160,7 @@ export async function GET(request: NextRequest) {
             throw new Error('Não foi possível determinar a URL do host a partir da requisição.');
         }
 
+        // Use 'https' para produção, mas permita 'http' para localhost
         const protocol = host.includes('localhost') ? 'http' : 'https';
         const webhookUrl = `${protocol}://${host}/api/telegram/webhook`;
         
