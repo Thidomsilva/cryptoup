@@ -20,6 +20,7 @@ export interface SimulationResult {
   finalBRL: number;
   profit: number;
   profitPercentage: number;
+  buyPrice: number;
 }
 
 export interface ExchangePrice {

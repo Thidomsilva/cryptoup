@@ -55,6 +55,9 @@ const ResultsDisplay: FC<{ results: SimulationResult[] }> = ({ results }) => {
                                 <span className="text-muted-foreground">Invested BRL:</span>
                                 <span className="text-right font-mono">{result.initialBRL.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
                                 
+                                <span className="text-muted-foreground">USDT Buy Price:</span>
+                                <span className="text-right font-mono">{result.buyPrice.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
+
                                 <span className="text-muted-foreground">Received USDT:</span>
                                 <span className="text-right font-mono">{result.usdtAmount.toFixed(4)}</span>
 
@@ -98,6 +101,8 @@ const LoadingSkeleton: FC = () => (
                         <Skeleton className="h-4 w-28" />
                         <Skeleton className="h-4 w-20 ml-auto" />
                         <Skeleton className="h-4 w-24" />
+                        <Skeleton className="h-4 w-16 ml-auto" />
+                         <Skeleton className="h-4 w-24" />
                         <Skeleton className="h-4 w-16 ml-auto" />
                         <Skeleton className="h-4 w-20" />
                         <Skeleton className="h-4 w-24 ml-auto" />
@@ -173,6 +178,7 @@ export default function ArbitrageSimulator() {
                     finalBRL,
                     profit,
                     profitPercentage,
+                    buyPrice: exchange.buyPrice,
                 };
             });
             
