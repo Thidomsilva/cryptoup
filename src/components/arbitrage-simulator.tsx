@@ -28,15 +28,16 @@ const ResultsDisplay: FC<{ results: SimulationResult[] }> = ({ results }) => {
     if (results.length === 0) return null;
 
     const bestResult = results
-        .filter(r => r.profit !== null)
-        .reduce((max, current) => ((current.profit ?? -Infinity) > (max.profit ?? -Infinity) ? current : max), results[0]);
+        .filter(r => r.profit !== null && typeof r.buyPrice === 'number')
+        .reduce((max, current) => ((current.profit ?? -Infinity) > (max.profit ?? -Infinity) ? current : max), null);
+
 
     return (
         <div className="mt-4">
             <h3 className="font-headline text-lg mb-4">Simulation Results</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {results.map((result, index) => {
-                     if (result.buyPrice === null || result.profit === null) {
+                     if (typeof result.buyPrice !== 'number' || result.profit === null) {
                         return (
                              <Card key={index} className="flex flex-col">
                                 <CardHeader>
@@ -48,13 +49,17 @@ const ResultsDisplay: FC<{ results: SimulationResult[] }> = ({ results }) => {
                                 <CardContent className="flex-grow flex flex-col items-center justify-center text-center">
                                      <AlertCircle className="w-10 h-10 text-muted-foreground mb-2" />
                                      <p className="text-muted-foreground font-medium">Price not found</p>
-                                     <p className="text-xs text-muted-foreground">Could not retrieve a valid price for this exchange.</p>
+                                     <p className="text-xs text-muted-foreground break-all">
+                                       {typeof result.buyPrice === 'string' 
+                                            ? `API Response: ${result.buyPrice.substring(0, 100)}...`
+                                            : 'Could not retrieve a valid price.'}
+                                     </p>
                                 </CardContent>
                             </Card>
                         )
                     }
 
-                    const isBest = result.exchangeName === bestResult.exchangeName && bestResult.profit > 0;
+                    const isBest = bestResult && result.exchangeName === bestResult.exchangeName && bestResult.profit > 0;
                     const profitColor = result.profit > 0 ? 'text-green-500' : 'text-red-600';
                     const ProfitIcon = result.profit > 0 ? ArrowUpCircle : ArrowDownCircle;
 
