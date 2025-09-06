@@ -183,11 +183,11 @@ export async function GET() {
     }
     const bot = new TelegramBot(token);
     const appUrl = process.env.NEXT_PUBLIC_APP_URL;
-    const webhookUrl = `${appUrl}/api/telegram/webhook`;
+    const finalWebhookUrl = `${appUrl}/api/telegram/webhook`;
     
     try {
         // Registra o webhook
-        await bot.setWebHook(webhookUrl);
+        await bot.setWebHook(finalWebhookUrl);
         
         // Registra os comandos
         await bot.setMyCommands([
@@ -198,7 +198,7 @@ export async function GET() {
 
         return NextResponse.json({ 
             success: true, 
-            message: `Webhook configurado com sucesso. O Telegram agora enviará atualizações para ${webhookUrl}. Comandos também foram registrados.` 
+            message: `Webhook configurado com sucesso. O Telegram agora enviará atualizações para ${finalWebhookUrl}. Comandos também foram registrados.` 
         });
     } catch (error) {
         console.error('Error setting webhook:', error);
