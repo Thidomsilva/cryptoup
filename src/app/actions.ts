@@ -6,7 +6,6 @@ import type { Exchange, ExchangeName, SimulationResult, GetCryptoPricesOutput } 
 const exchangeApiConfig = {
     Binance: {
         url: 'https://api.binance.com/api/v3/ticker/24hr?symbol=USDTBRL',
-        // A API da Binance retorna um objeto com 'lastPrice'.
         getPrice: (data: any) => {
             if (data && typeof data === 'object' && !Array.isArray(data) && data.lastPrice) {
                 return parseFloat(data.lastPrice);
@@ -16,7 +15,6 @@ const exchangeApiConfig = {
     },
     Bybit: {
         url: 'https://api.bybit.com/v5/market/tickers?category=spot&symbol=USDTBRL',
-        // A API da Bybit retorna { result: { list: [...] } }
         getPrice: (data: any) => {
              if (data?.result?.list && data.result.list.length > 0 && data.result.list[0].lastPrice) {
                 return parseFloat(data.result.list[0].lastPrice);
@@ -26,15 +24,26 @@ const exchangeApiConfig = {
     },
     KuCoin: {
         url: 'https://api.kucoin.com/api/v1/market/orderbook/level1?symbol=USDT-BRL',
-        // A API da KuCoin retorna { data: { price: ... } }
         getPrice: (data: any) => data?.data?.price ? parseFloat(data.data.price) : null
     },
     Coinbase: {
         url: 'https://api.coinbase.com/v2/prices/USDT-BRL/spot',
-        // A API da Coinbase retorna { data: { amount: ... } }
         getPrice: (data: any) => data?.data?.amount ? parseFloat(data.data.amount) : null
     }
 };
+
+const USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/109.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/109.0'
+];
+
+function getRandomUserAgent() {
+    return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+}
+
 
 async function fetchPriceFromExchange(exchangeName: ExchangeName): Promise<number | null> {
     const config = exchangeApiConfig[exchangeName];
@@ -45,11 +54,13 @@ async function fetchPriceFromExchange(exchangeName: ExchangeName): Promise<numbe
 
     try {
         const response = await fetch(config.url, {
+            // Força a busca de um novo recurso a cada vez
+            cache: 'no-store',
             headers: { 
                 'Accept': 'application/json', 
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36'
+                'User-Agent': getRandomUserAgent()
             },
-            signal: AbortSignal.timeout(10000) // 10 segundos de timeout
+            signal: AbortSignal.timeout(15000) // 15 segundos de timeout
         });
 
         if (!response.ok) {
