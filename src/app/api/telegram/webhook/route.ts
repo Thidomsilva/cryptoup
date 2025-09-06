@@ -29,27 +29,30 @@ async function formatResults(bot: any, results: SimulationResult[], amount: numb
         return "Não foi possível obter os resultados da simulação. Tente novamente mais tarde.";
     }
 
-    const bestResult = results
-        .filter(r => r.profit !== null && r.profit > 0)
-        .reduce((max, current) => ((current.profit ?? -Infinity) > (max.profit ?? -Infinity) ? current : max), null);
+    const successfulResults = results.filter(r => typeof r.buyPrice === 'number' && r.profit !== null);
+
+    const bestResult = successfulResults.length > 0 ? successfulResults
+        .filter(r => r.profit! > 0)
+        .reduce((max, current) => ((current.profit ?? -Infinity) > (max.profit ?? -Infinity) ? current : max), null) : null;
 
     let message = `*Simulação de Arbitragem para ${amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}*\n`;
     message += `_Preço de venda Picnic: ${currentPicnicPrice.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}_\n\n`;
 
     results.forEach(result => {
-        if (result.buyPrice === null || result.profit === null) {
+        if (typeof result.buyPrice !== 'number') {
              message += `*${result.exchangeName}*\n`;
-             message += `  - Cotação não encontrada.\n\n`;
+             message += `  - 🟥 *Falha na Cotação:*\n`;
+             message += `  \`\`\`\n  ${result.buyPrice || 'Nenhuma resposta da API.'}\n  \`\`\`\n\n`;
              return;
         }
 
         const isBest = bestResult && result.exchangeName === bestResult.exchangeName;
-        const profitIcon = result.profit > 0 ? '🟢' : '🔴';
+        const profitIcon = result.profit! > 0 ? '🟢' : '🔴';
 
         message += `*${result.exchangeName}* ${isBest ? '⭐️ *Melhor Opção*' : ''}\n`;
         message += `  - Compra USDT por: ${ result.buyPrice.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })  }\n`;
         message += `  - USDT Recebido: ${result.usdtAmount!.toFixed(4)}\n`;
-        message += `  - Lucro/Prejuízo: ${profitIcon} *${result.profit.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}* (${result.profitPercentage!.toFixed(2)}%)\n\n`;
+        message += `  - Lucro/Prejuízo: ${profitIcon} *${result.profit!.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}* (${result.profitPercentage!.toFixed(2)}%)\n\n`;
     });
     
     try {
@@ -117,10 +120,6 @@ Você pode usar os comandos em um chat privado comigo ou em um grupo onde eu fui
 
                     try {
                         const prices = await getUsdtBrlPrices();
-                        // Verifica se TODAS as cotações falharam
-                        if (!prices || prices.every(p => p.buyPrice === null)) {
-                             throw new Error("Could not fetch any prices.");
-                        }
                         
                         const exchangeRates: Exchange[] = prices.map(price => {
                             const details = EXCHANGES.find(e => e.name === price.name);
@@ -130,17 +129,19 @@ Você pode usar os comandos em um chat privado comigo ou em um grupo onde eu fui
                         const results = await runSimulation(amount, exchangeRates, picnicPrice);
                         const responseMessage = await formatResults(bot, results, amount, picnicPrice);
                         
-                        await bot.sendMessage(chatId, responseMessage, { parse_mode: 'Markdown' });
+                        // Enviar resposta no chat atual
+                        await bot.sendMessage(chatId, responseMessage, { parse_mode: 'Markdown', disable_web_page_preview: true });
                         
-                        // Postar no canal se o comando não veio do próprio canal
+                        // Postar no canal se houver pelo menos um sucesso e se o comando não veio do próprio canal
+                        const hasSuccess = results.some(r => typeof r.buyPrice === 'number');
                         const channelChat = await bot.getChat(CHANNEL_ID).catch(() => null);
-                        if (channelChat && String(chatId) !== String(channelChat.id)) {
-                             await bot.sendMessage(CHANNEL_ID, responseMessage, { parse_mode: 'Markdown' });
+                        if (hasSuccess && channelChat && String(chatId) !== String(channelChat.id)) {
+                             await bot.sendMessage(CHANNEL_ID, responseMessage, { parse_mode: 'Markdown', disable_web_page_preview: true });
                         }
 
                     } catch (error) {
                         console.error("Erro ao processar /cotap:", error);
-                        const errorMsg = "❌ *Erro ao buscar cotações.*\n\nNão foi possível obter os preços de uma ou mais exchanges. As APIs podem estar temporariamente indisponíveis. Por favor, tente novamente em alguns minutos.";
+                        const errorMsg = "❌ *Erro crítico na Simulação.*\n\nOcorreu uma falha inesperada ao processar sua solicitação. A equipe de desenvolvimento já foi notificada.";
                         await bot.sendMessage(chatId, errorMsg, { parse_mode: 'Markdown' });
                     }
                 } else if (setPicnicRegex.test(text)) {

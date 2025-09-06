@@ -9,7 +9,7 @@ export interface ExchangeDetails {
 }
 
 export interface Exchange extends ExchangeDetails {
-  buyPrice: number | null;
+  buyPrice: number | string | null;
 }
 
 export interface SimulationResult {
@@ -20,12 +20,12 @@ export interface SimulationResult {
   finalBRL: number | null;
   profit: number | null;
   profitPercentage: number | null;
-  buyPrice: number | null;
+  buyPrice: number | string | null;
 }
 
 export interface ExchangePrice {
   name: 'Binance' | 'Bybit' | 'KuCoin' | 'Coinbase';
-  buyPrice: number | null;
+  buyPrice: number | string | null;
 }
 
 export type GetCryptoPricesOutput = ExchangePrice[];

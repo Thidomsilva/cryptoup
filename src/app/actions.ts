@@ -6,46 +6,40 @@ import type { Exchange, ExchangeName, SimulationResult, GetCryptoPricesOutput } 
 const exchangeApiConfig = {
     Binance: {
         url: 'https://api.binance.com/api/v3/ticker/24hr?symbol=USDTBRL',
-        getPrice: (data: any) => {
-            // A API da Binance pode retornar um objeto ou um array.
+        getPrice: (data: any): number | null => {
             if (data && typeof data === 'object' && !Array.isArray(data) && data.lastPrice) {
                 return parseFloat(data.lastPrice);
             }
-            // Fallback para caso retorne um array com um único item.
             if (Array.isArray(data) && data.length > 0 && data[0].symbol === 'USDTBRL' && data[0].lastPrice) {
                 return parseFloat(data[0].lastPrice);
             }
-            console.log("Binance: Estrutura de dados inesperada:", JSON.stringify(data));
             return null;
         }
     },
     Bybit: {
         url: 'https://api.bybit.com/v5/market/tickers?category=spot&symbol=USDTBRL',
-        getPrice: (data: any) => {
+        getPrice: (data: any): number | null => {
              if (data?.result?.list && data.result.list.length > 0 && data.result.list[0].lastPrice) {
                 return parseFloat(data.result.list[0].lastPrice);
             }
-            console.log("Bybit: Estrutura de dados inesperada:", JSON.stringify(data));
             return null;
         }
     },
     KuCoin: {
         url: 'https://api.kucoin.com/api/v1/market/orderbook/level1?symbol=USDT-BRL',
-        getPrice: (data: any) => {
+        getPrice: (data: any): number | null => {
             if (data?.data?.price) {
                 return parseFloat(data.data.price);
             }
-            console.log("KuCoin: Estrutura de dados inesperada:", JSON.stringify(data));
             return null;
         }
     },
     Coinbase: {
         url: 'https://api.coinbase.com/v2/prices/USDT-BRL/spot',
-        getPrice: (data: any) => {
+        getPrice: (data: any): number | null => {
             if (data?.data?.amount) {
                 return parseFloat(data.data.amount);
             }
-             console.log("Coinbase: Estrutura de dados inesperada:", JSON.stringify(data));
             return null;
         }
     }
@@ -64,13 +58,11 @@ function getRandomUserAgent() {
 }
 
 
-async function fetchPriceFromExchange(exchangeName: ExchangeName): Promise<number | null> {
+async function fetchPriceFromExchange(exchangeName: ExchangeName): Promise<number | string | null> {
     const config = exchangeApiConfig[exchangeName];
-    if (!config) {
-        console.error(`Configuração não encontrada para a exchange: ${exchangeName}`);
-        return null;
-    }
+    if (!config) return `Config not found for ${exchangeName}`;
 
+    let responseText = '';
     try {
         const response = await fetch(config.url, {
             cache: 'no-store',
@@ -80,31 +72,27 @@ async function fetchPriceFromExchange(exchangeName: ExchangeName): Promise<numbe
             },
             signal: AbortSignal.timeout(15000)
         });
+        
+        responseText = await response.text();
 
         if (!response.ok) {
-            const errorBody = await response.text();
-            console.error(`Erro na API da ${exchangeName}. Status: ${response.status}. Body: ${errorBody}`);
-            return null;
+            return `API Error ${exchangeName}: Status ${response.status}. Body: ${responseText}`;
         }
         
-        const data = await response.json();
+        const data = JSON.parse(responseText);
         const price = config.getPrice(data);
 
         if (price === null || isNaN(price)) {
-            console.warn(`Não foi possível extrair o preço da resposta da ${exchangeName}.`);
-            return null;
+            return `Failed to parse price from ${exchangeName}. Raw data: ${responseText}`;
         }
         
-        console.log(`Preço da ${exchangeName} obtido com sucesso: ${price}`);
         return price;
 
     } catch (error) {
         if (error instanceof Error) {
-            console.error(`Erro ao buscar preço da ${exchangeName}: ${error.name} - ${error.message}`);
-        } else {
-             console.error(`Erro desconhecido ao buscar preço da ${exchangeName}:`, error);
+            return `Fetch Error ${exchangeName}: ${error.name} - ${error.message}. Raw text: ${responseText}`;
         }
-        return null;
+        return `Unknown error for ${exchangeName}.`;
     }
 }
 
@@ -128,12 +116,12 @@ const PICNIC_SELL_FEE = 0.002;
 
 export async function runSimulation(amount: number, rates: Exchange[], picnicPrice: number): Promise<SimulationResult[]> {
     return rates.map(exchange => {
-        if (exchange.buyPrice === null) {
+        if (typeof exchange.buyPrice !== 'number') {
             return {
                 exchangeName: exchange.name,
                 icon: exchange.icon,
                 initialBRL: amount,
-                buyPrice: null,
+                buyPrice: exchange.buyPrice, // Will be string or null
                 usdtAmount: null,
                 finalBRL: null,
                 profit: null,
