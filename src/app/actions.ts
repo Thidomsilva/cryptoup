@@ -2,131 +2,73 @@
 
 import type { GetCryptoPricesOutput, ExchangeName } from '@/lib/types';
 
-// Helper to map API exchange names to our internal ExchangeName type
-function mapExchangeName(apiName: string): ExchangeName | null {
-    const lowerCaseApiName = apiName.toLowerCase();
-    if (lowerCaseApiName.includes('binance')) return 'Binance';
-    if (lowerCaseApiName.includes('bybit')) return 'Bybit';
-    if (lowerCaseApiName.includes('kucoin')) return 'KuCoin';
-    if (lowerCaseApiName.includes('coinbase')) return 'Coinbase';
-    return null;
-}
+// Mapeamento de nomes para URLs de API e funções de extração de preço
+const exchangeApiConfig = {
+    Binance: {
+        url: 'https://api.binance.com/api/v3/ticker/price?symbol=USDTBRL',
+        getPrice: (data: any) => data.price ? parseFloat(data.price) : null
+    },
+    Bybit: {
+        url: 'https://api.bybit.com/v5/market/tickers?category=spot&symbol=USDTBRL',
+        getPrice: (data: any) => data.result?.list?.[0]?.lastPrice ? parseFloat(data.result.list[0].lastPrice) : null
+    },
+    KuCoin: {
+        url: 'https://api.kucoin.com/api/v1/market/orderbook/level1?symbol=USDT-BRL',
+        getPrice: (data: any) => data.data?.price ? parseFloat(data.data.price) : null
+    },
+    Coinbase: {
+        url: 'https://api.coinbase.com/v2/prices/USDT-BRL/spot',
+        getPrice: (data: any) => data.data?.amount ? parseFloat(data.data.amount) : null
+    }
+};
 
-async function getPtaxRate(): Promise<number | null> {
+async function fetchPriceFromExchange(exchangeName: ExchangeName): Promise<number | null> {
+    const config = exchangeApiConfig[exchangeName];
+    if (!config) {
+        console.error(`Configuração não encontrada para a exchange: ${exchangeName}`);
+        return null;
+    }
+
     try {
-        const response = await fetch("https://api.bcb.gov.br/dados/serie/bcdata.sgs.10813/dados/ultimos/1?formato=json", { next: { revalidate: 3600 } });
-        if (response.ok) {
-            const data = await response.json();
-            if (data && data[0] && data[0].valor) {
-                console.log("Successfully fetched PTAX rate:", data[0].valor);
-                return parseFloat(data[0].valor);
-            }
+        const response = await fetch(config.url, {
+            headers: { 'Accept': 'application/json' },
+            next: { revalidate: 30 } // Cache de 30 segundos
+        });
+
+        if (!response.ok) {
+            // Log do erro, mas não quebra a execução para as outras
+            console.warn(`Falha ao buscar preço da ${exchangeName}. Status: ${response.status}. Body: ${await response.text()}`);
+            return null;
         }
-        console.warn("Could not fetch PTAX rate from BCB API.");
-    } catch (e) {
-        console.error("Error fetching PTAX rate:", e);
-    }
-    return null;
-}
 
-async function getBrlToUsdRate(): Promise<number | null> {
-    try {
-        const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=usd-coin&vs_currencies=brl', { next: { revalidate: 60 } });
-        if (response.ok) {
-            const data = await response.json();
-            if (data['usd-coin'] && data['usd-coin'].brl) {
-                console.log("Using CoinGecko USDC/BRL rate:", data['usd-coin'].brl);
-                return data['usd-coin'].brl;
-            }
+        const data = await response.json();
+        const price = config.getPrice(data);
+
+        if (price === null || isNaN(price)) {
+            console.warn(`Não foi possível extrair o preço da resposta da ${exchangeName}. Data:`, JSON.stringify(data));
+            return null;
         }
-        console.warn("Could not fetch BRL/USDC direct rate from CoinGecko, falling back to PTAX.");
-    } catch (e) {
-        console.error("Error fetching BRL/USDC direct rate, falling back to PTAX:", e);
-    }
-    
-    // Fallback to PTAX if CoinGecko fails
-    const ptaxRate = await getPtaxRate();
-    if (ptaxRate) {
-        console.log("Using PTAX rate as fallback:", ptaxRate);
-        return ptaxRate;
-    }
+        
+        console.log(`Preço da ${exchangeName} obtido com sucesso: ${price}`);
+        return price;
 
-    console.error("FATAL: Could not determine a reliable BRL/USD conversion rate from any source.");
-    return null;
+    } catch (error) {
+        console.error(`Erro ao buscar preço da ${exchangeName}:`, error);
+        return null;
+    }
 }
-
 
 export async function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
     const allExchangeNames: ExchangeName[] = ['Binance', 'Bybit', 'KuCoin', 'Coinbase'];
-    try {
-        const [brlToUsdRate, tetherResponse] = await Promise.all([
-            getBrlToUsdRate(),
-            fetch('https://api.coingecko.com/api/v3/coins/tether/tickers?per_page=200', { next: { revalidate: 60 } })
-        ]);
-        
-        if (!brlToUsdRate) {
-            console.error("FATAL: BRL/USD conversion rate is not available. Cannot calculate prices.");
-            return allExchangeNames.map(name => ({ name, buyPrice: null }));
-        }
-        
-        if (!tetherResponse.ok) {
-            console.error('Failed to fetch from CoinGecko API:', tetherResponse.status, tetherResponse.statusText);
-            return allExchangeNames.map(name => ({ name, buyPrice: null }));
-        }
 
-        const data = await tetherResponse.json();
-        const tickers = data.tickers;
+    const pricePromises = allExchangeNames.map(name => fetchPriceFromExchange(name));
 
-        if (!tickers || !Array.isArray(tickers)) {
-            console.error('CoinGecko API returned invalid tickers data.');
-            return allExchangeNames.map(name => ({ name, buyPrice: null }));
-        }
+    const prices = await Promise.all(pricePromises);
 
-        const prices: { [K in ExchangeName]?: { price: number, priority: number } } = {};
-
-        for (const ticker of tickers) {
-            if (ticker.is_stale || ticker.converted_volume_usd < 1000) {
-                continue;
-            }
-
-            const exchangeName = mapExchangeName(ticker.market.name);
-
-            if (exchangeName && allExchangeNames.includes(exchangeName)) {
-                let currentPrice: number | null = null;
-                let priority = -1; 
-                
-                const base = ticker.base?.toUpperCase();
-                const target = ticker.target?.toUpperCase();
-
-                if (base === 'USDT' && target === 'BRL' && ticker.last > 1) {
-                     currentPrice = ticker.last;
-                     priority = 1;
-                } else if (base === 'USDT' && ['USD', 'USDC', 'USDT'].includes(target) && ticker.last > 0.9 && ticker.last < 1.1) {
-                    currentPrice = ticker.last * brlToUsdRate;
-                    priority = 0;
-                }
-
-                if (currentPrice !== null) {
-                    if (!prices[exchangeName] || priority > (prices[exchangeName]?.priority ?? -1)) {
-                         prices[exchangeName] = { price: currentPrice, priority };
-                    }
-                }
-            }
-        }
-        
-        const finalPrices: GetCryptoPricesOutput = allExchangeNames.map(name => ({
-            name: name,
-            buyPrice: prices[name]?.price ?? null,
-        }));
-
-        if (finalPrices.every(p => p.buyPrice === null)) {
-            console.warn("Could not fetch or calculate any valid USDT prices for any exchange from the received tickers.");
-        }
-
-        return finalPrices;
-
-    } catch (error) {
-        console.error('Error fetching or processing cryptocurrency prices:', error);
-        return allExchangeNames.map(name => ({ name, buyPrice: null }));
-    }
+    const finalPrices: GetCryptoPricesOutput = allExchangeNames.map((name, index) => ({
+        name: name,
+        buyPrice: prices[index],
+    }));
+    
+    return finalPrices;
 }
