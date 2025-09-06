@@ -116,27 +116,24 @@ export async function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
             }
         }
         
-        const finalPrices: GetCryptoPricesOutput = allExchangeNames
-            .map(name => {
-                if (prices[name]) {
-                    return {
-                        name: name,
-                        buyPrice: prices[name]!.price,
-                    };
-                }
-                // If price is not found for a specific exchange, create a placeholder using the BRL/USD rate
-                // This ensures all exchanges are always present, preventing the frontend error.
-                console.warn(`Could not find a specific price for ${name}. Using the general BRL/USD rate as an estimate.`);
+        const finalPrices: GetCryptoPricesOutput = allExchangeNames.map(name => {
+            if (prices[name]) {
                 return {
                     name: name,
-                    buyPrice: brlToUsdRate, // Using the general rate as a fallback price
+                    buyPrice: prices[name]!.price,
                 };
-            })
-            .filter((p): p is { name: ExchangeName; buyPrice: number; } => p !== null);
+            }
+            console.warn(`Could not find a specific price for ${name}.`);
+            return {
+                name: name,
+                buyPrice: null,
+            };
+        });
 
 
-        if (finalPrices.length === 0) {
-            console.error("Could not fetch or calculate any valid USDT prices.");
+        if (finalPrices.every(p => p.buyPrice === null)) {
+            console.error("Could not fetch or calculate any valid USDT prices for any exchange.");
+             return [];
         }
 
         return finalPrices;

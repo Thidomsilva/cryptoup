@@ -30,6 +30,19 @@ let picnicPrice = 5.25; // Preço padrão, pode ser alterado por comando
 // --- Funções de Simulação (adaptadas do client-side) ---
 function runSimulation(amount: number, rates: Exchange[]): SimulationResult[] {
     return rates.map(exchange => {
+        if (exchange.buyPrice === null) {
+            return {
+                exchangeName: exchange.name,
+                icon: () => null,
+                initialBRL: amount,
+                buyPrice: null,
+                usdtAmount: null,
+                finalBRL: null,
+                profit: null,
+                profitPercentage: null,
+            };
+        }
+
         const usdtBought = amount / exchange.buyPrice;
         const usdtAfterFee = usdtBought * (1 - exchange.fee);
         const brlFromSale = usdtAfterFee * picnicPrice;
@@ -56,19 +69,27 @@ function formatResults(results: SimulationResult[], amount: number): string {
         return "Não foi possível obter os resultados da simulação. Tente novamente mais tarde.";
     }
 
-    const bestResult = results.reduce((max, current) => (current.profit > max.profit ? current : max), results[0]);
+    const bestResult = results
+        .filter(r => r.profit !== null)
+        .reduce((max, current) => ((current.profit ?? -Infinity) > (max.profit ?? -Infinity) ? current : max), results[0]);
 
     let message = `*Simulação de Arbitragem para ${amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}*\n`;
     message += `_Preço de venda Picnic: ${picnicPrice.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}_\n\n`;
 
     results.forEach(result => {
-        const isBest = result.exchangeName === bestResult.exchangeName && bestResult.profit > 0;
+        if (result.buyPrice === null || result.profit === null) {
+             message += `*${result.exchangeName}*\n`;
+             message += `  - Cotação não encontrada.\n\n`;
+             return;
+        }
+
+        const isBest = result.exchangeName === bestResult.exchangeName && bestResult.profit! > 0;
         const profitIcon = result.profit > 0 ? '🟢' : '🔴';
 
         message += `*${result.exchangeName}* ${isBest ? '⭐️ *Melhor Opção*' : ''}\n`;
         message += `  - Compra USDT por: ${ result.buyPrice.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })  }\n`;
-        message += `  - USDT Recebido: ${result.usdtAmount.toFixed(4)}\n`;
-        message += `  - Lucro/Prejuízo: ${profitIcon} *${result.profit.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}* (${result.profitPercentage.toFixed(2)}%)\n\n`;
+        message += `  - USDT Recebido: ${result.usdtAmount!.toFixed(4)}\n`;
+        message += `  - Lucro/Prejuízo: ${profitIcon} *${result.profit.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}* (${result.profitPercentage!.toFixed(2)}%)\n\n`;
     });
     
     bot.getMe().then(me => {

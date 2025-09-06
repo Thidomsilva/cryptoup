@@ -9,23 +9,23 @@ export interface ExchangeDetails {
 }
 
 export interface Exchange extends ExchangeDetails {
-  buyPrice: number;
+  buyPrice: number | null;
 }
 
 export interface SimulationResult {
   exchangeName: ExchangeName;
   icon: ComponentType<SVGProps<SVGSVGElement>>;
   initialBRL: number;
-  usdtAmount: number;
-  finalBRL: number;
-  profit: number;
-  profitPercentage: number;
-  buyPrice: number;
+  usdtAmount: number | null;
+  finalBRL: number | null;
+  profit: number | null;
+  profitPercentage: number | null;
+  buyPrice: number | null;
 }
 
 export interface ExchangePrice {
   name: 'Binance' | 'Bybit' | 'KuCoin' | 'Coinbase';
-  buyPrice: number;
+  buyPrice: number | null;
 }
 
 export type GetCryptoPricesOutput = ExchangePrice[];

@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ArrowUpCircle, ArrowDownCircle, Bot, Terminal, ChevronRight } from 'lucide-react';
+import { ArrowUpCircle, ArrowDownCircle, Bot, Terminal, ChevronRight, AlertCircle } from 'lucide-react';
 import type { Exchange, SimulationResult, ExchangeDetails, GetCryptoPricesOutput } from '@/lib/types';
 import { BinanceIcon } from './icons/binance-icon';
 import { BybitIcon } from './icons/bybit-icon';
@@ -29,13 +29,33 @@ const PICNIC_SELL_FEE = 0.002;
 const ResultsDisplay: FC<{ results: SimulationResult[] }> = ({ results }) => {
     if (results.length === 0) return null;
 
-    const bestResult = results.reduce((max, current) => (current.profit > max.profit ? current : max), results[0]);
+    const bestResult = results
+        .filter(r => r.profit !== null)
+        .reduce((max, current) => ((current.profit ?? -Infinity) > (max.profit ?? -Infinity) ? current : max), results[0]);
 
     return (
         <div className="mt-4">
             <h3 className="font-headline text-lg mb-4">Simulation Results</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {results.map((result, index) => {
+                     if (result.buyPrice === null || result.profit === null) {
+                        return (
+                             <Card key={index} className="flex flex-col">
+                                <CardHeader>
+                                    <div className="flex items-center gap-3">
+                                        <result.icon className="w-8 h-8" />
+                                        <CardTitle className="font-headline">{result.exchangeName}</CardTitle>
+                                    </div>
+                                </CardHeader>
+                                <CardContent className="flex-grow flex flex-col items-center justify-center text-center">
+                                     <AlertCircle className="w-10 h-10 text-muted-foreground mb-2" />
+                                     <p className="text-muted-foreground font-medium">Price not found</p>
+                                     <p className="text-xs text-muted-foreground">Could not retrieve a valid price for this exchange.</p>
+                                </CardContent>
+                            </Card>
+                        )
+                    }
+
                     const isBest = result.exchangeName === bestResult.exchangeName && bestResult.profit > 0;
                     const profitColor = result.profit > 0 ? 'text-green-500' : 'text-red-600';
                     const ProfitIcon = result.profit > 0 ? ArrowUpCircle : ArrowDownCircle;
@@ -59,17 +79,17 @@ const ResultsDisplay: FC<{ results: SimulationResult[] }> = ({ results }) => {
                                 <span className="text-right font-mono">{result.buyPrice.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
 
                                 <span className="text-muted-foreground">Received USDT:</span>
-                                <span className="text-right font-mono">{result.usdtAmount.toFixed(4)}</span>
+                                <span className="text-right font-mono">{result.usdtAmount?.toFixed(4)}</span>
 
                                 <span className="text-muted-foreground">Final BRL:</span>
-                                <span className="text-right font-mono">{result.finalBRL.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
+                                <span className="text-right font-mono">{result.finalBRL?.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
                             </CardContent>
                             <CardFooter className="mt-auto">
                                 <div className={`flex items-center gap-2 font-bold text-base ${profitColor}`}>
                                     <ProfitIcon className="w-5 h-5" />
                                     <span>
                                         {result.profit.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                                        <span className="ml-2 font-mono">({result.profitPercentage.toFixed(2)}%)</span>
+                                        <span className="ml-2 font-mono">({result.profitPercentage?.toFixed(2)}%)</span>
                                     </span>
                                 </div>
                             </CardFooter>
@@ -156,13 +176,25 @@ export default function ArbitrageSimulator() {
             const exchangeRates: Exchange[] = prices.map(price => {
                 const details = exchangeDataMap.get(price.name);
                 if (!details) {
-                    // Silently ignore exchanges we don't have details for
                     return null;
                 }
                 return { ...details, buyPrice: price.buyPrice };
             }).filter((e): e is Exchange => e !== null);
 
             const results: SimulationResult[] = exchangeRates.map(exchange => {
+                if (exchange.buyPrice === null) {
+                    return {
+                        exchangeName: exchange.name,
+                        icon: exchange.icon,
+                        initialBRL: amount,
+                        buyPrice: null,
+                        usdtAmount: null,
+                        finalBRL: null,
+                        profit: null,
+                        profitPercentage: null,
+                    };
+                }
+
                 const usdtBought = amount / exchange.buyPrice;
                 const usdtAfterFee = usdtBought * (1 - exchange.fee);
                 const brlFromSale = usdtAfterFee * picnicPrice;
