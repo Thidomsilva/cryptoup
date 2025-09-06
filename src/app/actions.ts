@@ -14,27 +14,24 @@ function mapExchangeName(apiName: string): ExchangeName | null {
 
 export async function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
     try {
-        // Usaremos a API da CoinGecko, um popular agregador de dados de criptomoedas gratuito.
-        // Estamos buscando os tickers do Tether (USDT).
         const response = await fetch('https://api.coingecko.com/api/v3/coins/tether/tickers');
         
         if (!response.ok) {
             console.error('Falha ao buscar da API CoinGecko:', response.status, response.statusText);
-            // Fallback para evitar que o aplicativo quebre, embora em um cenário real,
-            // pudéssemos querer um tratamento de erro mais robusto ou um mecanismo de nova tentativa.
             return [];
         }
 
         const data = await response.json();
 
-        // Encontra um ticker de referência para a conversão BRL/USD, se necessário.
+        // Tenta encontrar uma taxa de conversão de USDT para BRL, preferencialmente da Binance.
         const usdtToBrlRate = data.tickers.find(
             (ticker: any) => ticker.target === 'BRL' && ticker.market.name.toLowerCase().includes('binance')
         )?.converted_last?.brl;
-        
+
         if (!usdtToBrlRate) {
-            console.error("Não foi possível encontrar uma taxa de conversão de BRL. Usando um valor padrão.");
-             // Se não encontrarmos uma taxa, não podemos continuar com a conversão de USD.
+            // Se a taxa BRL não for encontrada, o fluxo dependerá dos tickers em USD,
+            // mas um log pode ser útil para depuração.
+            console.warn("Não foi possível encontrar uma taxa de conversão direta BRL/USDT na Binance. Tentando via USD.");
         }
 
         const allExchangeNames: ExchangeName[] = ['Binance', 'Bybit', 'KuCoin', 'Coinbase'];
@@ -47,11 +44,10 @@ export async function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
                 (ticker: any) => ticker.target === 'BRL' && mapExchangeName(ticker.market.name) === exchangeName
             );
 
-            if (brlTicker) {
+            if (brlTicker && brlTicker.converted_last?.brl) {
                 if (!addedExchanges.has(exchangeName)) {
                     prices.push({
                         name: exchangeName,
-                        // 'converted_last' fornece o preço na moeda de destino (BRL)
                         buyPrice: brlTicker.converted_last.brl,
                     });
                     addedExchanges.add(exchangeName);
@@ -62,7 +58,7 @@ export async function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
                     (ticker: any) => ticker.target === 'USD' && mapExchangeName(ticker.market.name) === exchangeName
                 );
 
-                if (usdTicker) {
+                if (usdTicker && usdTicker.converted_last?.usd) {
                      if (!addedExchanges.has(exchangeName)) {
                         prices.push({
                             name: exchangeName,
@@ -73,13 +69,19 @@ export async function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
                 } else {
                      console.warn(`Não foi possível encontrar um preço BRL ou USD para ${exchangeName} na CoinGecko.`);
                 }
+            } else {
+                // Caso em que nem a taxa BRL direta nem a taxa de conversão BRL/USD foram encontradas
+                console.error(`Não foi possível obter a cotação para ${exchangeName} devido à falta da taxa de conversão para BRL.`);
             }
+        }
+
+        if (prices.length === 0) {
+            console.error("Não foi possível obter nenhuma cotação de nenhuma exchange.");
         }
 
         return prices;
     } catch (error) {
         console.error('Erro ao buscar ou processar preços de criptomoedas:', error);
-        // Retorna um array vazio ou trata o erro conforme apropriado
         return [];
     }
 }
