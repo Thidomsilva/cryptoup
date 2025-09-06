@@ -14,20 +14,20 @@ function mapExchangeName(apiName: string): ExchangeName | null {
 
 async function getBrlToUsdRate(): Promise<number | null> {
     try {
-        // First, try to get the direct price of USDT in BRL, which is the most accurate for conversion.
-        const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=tether&vs_currencies=brl');
+        // This is a reliable endpoint for a direct BRL to USD spot rate.
+        const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=usd-coin&vs_currencies=brl');
         if (response.ok) {
             const data = await response.json();
-            if (data.tether && data.tether.brl) {
-                return data.tether.brl;
+            if (data['usd-coin'] && data['usd-coin'].brl) {
+                return data['usd-coin'].brl;
             }
         }
-        console.warn("Could not fetch BRL/USDT direct rate from CoinGecko.");
+        console.warn("Could not fetch BRL/USDC direct rate from CoinGecko.");
     } catch (e) {
-        console.error("Error fetching BRL/USDT direct rate:", e);
+        console.error("Error fetching BRL/USDC direct rate:", e);
     }
     
-    // Fallback if the direct USDT rate is not available
+    // Fallback if the direct USDC rate is not available
     try {
         const response = await fetch('https://api.coingecko.com/api/v3/exchange_rates');
          if (response.ok) {
@@ -50,7 +50,7 @@ export async function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
     try {
         const [brlToUsdRate, tetherResponse] = await Promise.all([
             getBrlToUsdRate(),
-            fetch('https://api.coingecko.com/api/v3/coins/tether/tickers')
+            fetch('https://api.coingecko.com/api/v3/coins/tether/tickers?per_page=100')
         ]);
         
         if (!tetherResponse.ok) {
@@ -67,43 +67,46 @@ export async function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
         }
 
         if (!brlToUsdRate) {
-            // If we absolutely cannot get a conversion rate, we can only rely on direct BRL prices.
-            console.warn("Warning: BRL/USD conversion rate is not available. Only direct BRL prices will be used.");
+            console.error("FATAL: BRL/USD conversion rate is not available. Cannot calculate prices.");
+            return [];
         }
 
         const allExchangeNames: ExchangeName[] = ['Binance', 'Bybit', 'KuCoin', 'Coinbase'];
         const prices: GetCryptoPricesOutput = [];
         const addedExchanges = new Set<ExchangeName>();
 
-        // First pass: Prioritize direct BRL tickers if available
+        // We will iterate through all tickers and pick the first valid price for each exchange we need.
         for (const ticker of tickers) {
             const exchangeName = mapExchangeName(ticker.market.name);
+
+            // If we have an exchange we care about and haven't added it yet
             if (exchangeName && allExchangeNames.includes(exchangeName) && !addedExchanges.has(exchangeName)) {
-                if (ticker.target === 'BRL' && ticker.converted_last?.brl) {
-                    prices.push({
+                
+                // Prioritize direct BRL pairs if they exist and seem valid
+                if (ticker.target === 'BRL' && ticker.last > 1) { // Check if 'last' seems like a BRL price
+                     prices.push({
                         name: exchangeName,
-                        buyPrice: ticker.converted_last.brl,
+                        buyPrice: ticker.last,
                     });
                     addedExchanges.add(exchangeName);
+                    continue; // Move to the next ticker
+                }
+
+                // Otherwise, use a USD-based pair for conversion
+                if ((ticker.target === 'USDT' || ticker.target === 'USD') && ticker.last > 0.5 && ticker.last < 1.5) { // Sanity check for a ~1.0 price
+                    prices.push({
+                        name: exchangeName,
+                        buyPrice: ticker.last * brlToUsdRate,
+                    });
+                    addedExchanges.add(exchangeName);
+                    continue; // Move to the next ticker
                 }
             }
         }
-
-        // Second pass: For exchanges not found with a direct BRL pair, use USD tickers and the conversion rate
-        if (brlToUsdRate) {
-            for (const ticker of tickers) {
-                const exchangeName = mapExchangeName(ticker.market.name);
-                 if (exchangeName && allExchangeNames.includes(exchangeName) && !addedExchanges.has(exchangeName)) {
-                    // Use USDT as the primary target, but fall back to USD if needed.
-                    if ((ticker.target === 'USDT' || ticker.target === 'USD') && ticker.converted_last?.usd) {
-                        prices.push({
-                            name: exchangeName,
-                            buyPrice: ticker.converted_last.usd * brlToUsdRate,
-                        });
-                        addedExchanges.add(exchangeName);
-                    }
-                }
-            }
+        
+        // Final check to see if we got all exchanges we wanted
+        if (addedExchanges.size < allExchangeNames.length) {
+            console.warn("Could not find prices for all desired exchanges:", allExchangeNames.filter(e => !addedExchanges.has(e)));
         }
 
         if (prices.length === 0) {
