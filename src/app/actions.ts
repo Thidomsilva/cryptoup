@@ -78,8 +78,8 @@ export async function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
         const prices: { [K in ExchangeName]?: { price: number, priority: number } } = {};
 
         for (const ticker of tickers) {
-            // Skip if the ticker is stale or has no volume
-            if (ticker.is_stale || ticker.converted_volume_usd < 1000) {
+            // Skip if the ticker is stale or has no volume, or if it's not a USDT pair
+            if (ticker.is_stale || ticker.converted_volume_usd < 1000 || ticker.base.toUpperCase() !== 'USDT') {
                 continue;
             }
 
