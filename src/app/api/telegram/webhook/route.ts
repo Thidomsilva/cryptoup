@@ -113,12 +113,12 @@ Você pode usar os comandos em um chat privado comigo ou em um grupo onde eu fui
                         return NextResponse.json({ status: 'ok' });
                     }
 
-                    await bot.sendMessage(chatId, `🔍 Buscando cotações para ${amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}...`);
+                    await bot.sendMessage(chatId, `🔍 Analisando cotações para *${amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}*... Por favor, aguarde.`, { parse_mode: 'Markdown' });
 
                     try {
                         const prices = await getUsdtBrlPrices();
-                        if (!prices || prices.length === 0) {
-                            throw new Error("Could not fetch prices");
+                        if (!prices || prices.some(p => p.buyPrice === null)) {
+                             throw new Error("Could not fetch one or more prices.");
                         }
                         
                         const exchangeRates: Exchange[] = prices.map(price => {
@@ -139,8 +139,8 @@ Você pode usar os comandos em um chat privado comigo ou em um grupo onde eu fui
 
                     } catch (error) {
                         console.error("Erro ao processar /cotap:", error);
-                        const errorMsg = "❌ Erro: Não foi possível buscar as cotações. As APIs podem estar indisponíveis. Tente novamente mais tarde.";
-                        await bot.sendMessage(chatId, errorMsg);
+                        const errorMsg = "❌ *Erro ao buscar cotações.*\n\nNão foi possível obter os preços de uma ou mais exchanges. As APIs podem estar temporariamente indisponíveis. Por favor, tente novamente em alguns minutos.";
+                        await bot.sendMessage(chatId, errorMsg, { parse_mode: 'Markdown' });
                     }
                 } else if (setPicnicRegex.test(text)) {
                     const match = text.match(setPicnicRegex);
@@ -173,15 +173,17 @@ Você pode usar os comandos em um chat privado comigo ou em um grupo onde eu fui
 }
 
 
-// Rota GET para registrar o webhook (chame isso uma vez)
-export async function GET(request: NextRequest) {
-    if (!token || !webhookUrl) {
+// Rota GET para registrar o webhook (chame isso uma vez APÓS o deploy)
+export async function GET() {
+    if (!token || !process.env.NEXT_PUBLIC_APP_URL) {
         return NextResponse.json({ 
             success: false, 
-            message: 'Bot token or Webhook URL not configured in environment variables.' 
+            message: 'BOT_TOKEN ou NEXT_PUBLIC_APP_URL não configurados no ambiente.' 
         }, { status: 500 });
     }
     const bot = new TelegramBot(token);
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+    const webhookUrl = `${appUrl}/api/telegram/webhook`;
     
     try {
         // Registra o webhook
@@ -196,14 +198,14 @@ export async function GET(request: NextRequest) {
 
         return NextResponse.json({ 
             success: true, 
-            message: `Webhook configured successfully for ${webhookUrl}. Commands registered.` 
+            message: `Webhook configurado com sucesso. O Telegram agora enviará atualizações para ${webhookUrl}. Comandos também foram registrados.` 
         });
     } catch (error) {
         console.error('Error setting webhook:', error);
         const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
         return NextResponse.json({ 
             success: false, 
-            message: 'Failed to set webhook.', 
+            message: 'Falha ao configurar o webhook.', 
             error: errorMessage 
         }, { status: 500 });
     }
