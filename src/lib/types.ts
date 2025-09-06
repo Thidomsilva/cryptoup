@@ -2,11 +2,14 @@ import type { ComponentType, SVGProps } from "react";
 
 export type ExchangeName = 'Binance' | 'Bybit' | 'KuCoin' | 'Coinbase';
 
-export interface Exchange {
+export interface ExchangeDetails {
   name: ExchangeName;
-  buyPrice: number;
   fee: number;
   icon: ComponentType<SVGProps<SVGSVGElement>>;
+}
+
+export interface Exchange extends ExchangeDetails {
+  buyPrice: number;
 }
 
 export interface SimulationResult {

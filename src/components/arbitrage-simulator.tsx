@@ -8,15 +8,17 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ArrowUpCircle, ArrowDownCircle, Bot, Terminal, ChevronRight } from 'lucide-react';
-import type { Exchange, SimulationResult, ExchangeName } from '@/lib/types';
+import type { Exchange, SimulationResult, ExchangeDetails } from '@/lib/types';
 import { BinanceIcon } from './icons/binance-icon';
 import { BybitIcon } from './icons/bybit-icon';
 import { KucoinIcon } from './icons/kucoin-icon';
 import { CoinbaseIcon } from './icons/coinbase-icon';
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
+import { getUsdtBrlPrices } from "@/ai/flows/get-crypto-prices";
 
-const EXCHANGES: Omit<Exchange, 'buyPrice'>[] = [
+
+const EXCHANGES: ExchangeDetails[] = [
     { name: 'Binance', fee: 0.001, icon: BinanceIcon },
     { name: 'Bybit', fee: 0.001, icon: BybitIcon },
     { name: 'KuCoin', fee: 0.001, icon: KucoinIcon },
@@ -137,36 +139,51 @@ export default function ArbitrageSimulator() {
         setIsLoading(true);
         addHistory(<LoadingSkeleton />);
 
-        const basePrice = 5.20;
-        const exchangeRates: Exchange[] = EXCHANGES.map(ex => ({
-            ...ex,
-            buyPrice: basePrice + (Math.random() - 0.5) * 0.1,
-        }));
+        try {
+            const prices = await getUsdtBrlPrices();
 
-        await new Promise(resolve => setTimeout(resolve, 800)); // Simulate API delay
+            const exchangeDataMap = new Map(EXCHANGES.map(e => [e.name, e]));
 
-        const results: SimulationResult[] = exchangeRates.map(exchange => {
-            const usdtBought = amount / exchange.buyPrice;
-            const usdtAfterFee = usdtBought * (1 - exchange.fee);
-            const brlFromSale = usdtAfterFee * picnicPrice;
-            const finalBRL = brlFromSale * (1 - PICNIC_SELL_FEE);
-            const profit = finalBRL - amount;
-            const profitPercentage = (profit / amount) * 100;
+            const exchangeRates: Exchange[] = prices.map(price => {
+                const details = exchangeDataMap.get(price.name);
+                if (!details) {
+                    throw new Error(`Details for exchange ${price.name} not found`);
+                }
+                return { ...details, buyPrice: price.buyPrice };
+            });
 
-            return {
-                exchangeName: exchange.name,
-                icon: exchange.icon,
-                initialBRL: amount,
-                usdtAmount: usdtAfterFee,
-                finalBRL,
-                profit,
-                profitPercentage,
-            };
-        });
-        
-        setHistory(prev => prev.slice(0, -1)); // Remove skeleton
-        addHistory(<ResultsDisplay results={results} />);
-        setIsLoading(false);
+            const results: SimulationResult[] = exchangeRates.map(exchange => {
+                const usdtBought = amount / exchange.buyPrice;
+                const usdtAfterFee = usdtBought * (1 - exchange.fee);
+                const brlFromSale = usdtAfterFee * picnicPrice;
+                const finalBRL = brlFromSale * (1 - PICNIC_SELL_FEE);
+                const profit = finalBRL - amount;
+                const profitPercentage = (profit / amount) * 100;
+
+                return {
+                    exchangeName: exchange.name,
+                    icon: exchange.icon,
+                    initialBRL: amount,
+                    usdtAmount: usdtAfterFee,
+                    finalBRL,
+                    profit,
+                    profitPercentage,
+                };
+            });
+            
+            setHistory(prev => prev.slice(0, -1)); // Remove skeleton
+            addHistory(<ResultsDisplay results={results} />);
+        } catch(error) {
+             setHistory(prev => prev.slice(0, -1)); // Remove skeleton
+             toast({
+                variant: "destructive",
+                title: "Error fetching prices",
+                description: "Could not fetch crypto prices. Please try again later.",
+            });
+             console.error(error);
+        } finally {
+            setIsLoading(false);
+        }
 
     }, [picnicPrice, addHistory, toast]);
 
