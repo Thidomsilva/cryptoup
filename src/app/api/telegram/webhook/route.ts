@@ -107,8 +107,11 @@ export async function POST(request: NextRequest) {
                 
                 // Envia a resposta para o usuário que pediu
                 await bot.sendMessage(chatId, responseMessage, { parse_mode: 'Markdown' });
-                // Envia a mesma resposta para o canal
-                await bot.sendMessage(CHANNEL_ID, responseMessage, { parse_mode: 'Markdown' });
+                
+                // Se o comando não foi executado no próprio canal, envia para o canal também
+                if (chatId.toString() !== CHANNEL_ID) {
+                    await bot.sendMessage(CHANNEL_ID, responseMessage, { parse_mode: 'Markdown' });
+                }
 
                 break;
             }
@@ -130,8 +133,10 @@ export async function POST(request: NextRequest) {
                 const helpMessage = `
 *Bem-vindo ao Bot de Simulação de Arbitragem USDT/BRL!*
 
-Comandos disponíveis:
-- \`/cotap <valor>\`: Simula uma operação de arbitragem com o valor em BRL especificado. O resultado também será postado no canal ${CHANNEL_ID}.
+Você pode usar os comandos em um chat privado comigo ou em um grupo onde eu fui adicionado.
+
+*Comandos disponíveis:*
+- \`/cotap <valor>\`: Simula uma operação de arbitragem. O resultado é enviado aqui e também postado no canal ${CHANNEL_ID}.
   _Exemplo: \`/cotap 5000\`_
   
 - \`/setpicnic <preço>\`: Define o preço de venda do USDT na Picnic para as simulações.
