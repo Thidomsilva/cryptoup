@@ -14,11 +14,12 @@ function mapExchangeName(apiName: string): ExchangeName | null {
 
 async function getBrlToUsdRate(): Promise<number | null> {
     try {
-        // This is a reliable endpoint for a direct BRL to USD spot rate.
+        // This is a reliable endpoint for a direct BRL to USD spot rate via USDC.
         const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=usd-coin&vs_currencies=brl');
         if (response.ok) {
             const data = await response.json();
             if (data['usd-coin'] && data['usd-coin'].brl) {
+                // The price of 1 USDC in BRL is effectively the BRL/USD exchange rate.
                 return data['usd-coin'].brl;
             }
         }
@@ -33,6 +34,7 @@ async function getBrlToUsdRate(): Promise<number | null> {
          if (response.ok) {
             const data = await response.json();
             if (data.rates && data.rates.brl && data.rates.usd) {
+                // Calculate BRL per 1 USD
                 return data.rates.brl.value / data.rates.usd.value;
             }
         }
@@ -67,40 +69,47 @@ export async function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
         }
 
         if (!brlToUsdRate) {
-            console.error("FATAL: BRL/USD conversion rate is not available. Cannot calculate prices.");
-            return [];
+            console.error("FATAL: BRL/USD conversion rate is not available. Cannot calculate prices based on USD pairs.");
+            // We can still proceed if we find direct BRL pairs, but USD-based ones will be skipped.
         }
 
         const allExchangeNames: ExchangeName[] = ['Binance', 'Bybit', 'KuCoin', 'Coinbase'];
+        // Store the best price found for each exchange. Priority is 1 for BRL pairs, 0 for USD pairs.
         const prices: { [K in ExchangeName]?: { price: number, priority: number } } = {};
 
         for (const ticker of tickers) {
+            // Skip if the ticker is stale or has no volume
+            if (ticker.is_stale || ticker.converted_volume_usd < 1000) {
+                continue;
+            }
+
             const exchangeName = mapExchangeName(ticker.market.name);
 
             if (exchangeName && allExchangeNames.includes(exchangeName)) {
                 let currentPrice: number | null = null;
-                let priority = 0; // 0 for USD-based, 1 for BRL-based
+                let priority = -1; 
 
-                // Prioritize direct BRL pairs
+                // Prioritize direct BRL pairs. A price > 1 is a sanity check.
                 if (ticker.target === 'BRL' && ticker.last > 1) {
                      currentPrice = ticker.last;
-                     priority = 1;
+                     priority = 1; // Higher priority for direct BRL
                 }
-                // Fallback to USD-based pair for conversion
-                else if ((ticker.target === 'USDT' || ticker.target === 'USD') && ticker.last > 0.5 && ticker.last < 1.5) {
+                // Fallback to USD-based pair for conversion. A price around 1 is a sanity check.
+                else if (brlToUsdRate && (ticker.target === 'USDT' || ticker.target === 'USD') && ticker.last > 0.5 && ticker.last < 1.5) {
                     currentPrice = ticker.last * brlToUsdRate;
-                    priority = 0;
+                    priority = 0; // Lower priority for converted USD
                 }
 
                 if (currentPrice !== null) {
-                    // If we don't have a price for this exchange yet, or if the new one is higher priority (BRL)
+                    // If we don't have a price for this exchange yet, or if the new one is higher priority (BRL),
+                    // we store it. This ensures a BRL price overwrites a USD-converted one.
                     if (!prices[exchangeName] || priority > (prices[exchangeName]?.priority ?? -1)) {
-                         prices[exchangeName] = { price: currentPrice, priority: priority };
+                         prices[exchangeName] = { price: currentPrice, priority };
                     }
                 }
             }
         }
-
+        
         const finalPrices: GetCryptoPricesOutput = allExchangeNames
             .map(name => {
                 if (prices[name]) {
