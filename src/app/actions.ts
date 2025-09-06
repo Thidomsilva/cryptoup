@@ -1,7 +1,6 @@
 'use server';
 
 import type { Exchange, ExchangeName, SimulationResult, GetCryptoPricesOutput } from '@/lib/types';
-import axios from 'axios';
 
 // Mapeamento de nomes para URLs de API e funções de extração de preço
 const exchangeApiConfig = {
@@ -45,15 +44,21 @@ async function fetchPriceFromExchange(exchangeName: ExchangeName): Promise<numbe
     }
 
     try {
-        const response = await axios.get(config.url, {
+        const response = await fetch(config.url, {
             headers: { 
                 'Accept': 'application/json', 
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36'
             },
-            timeout: 10000 // 10 segundos de timeout
+            signal: AbortSignal.timeout(10000) // 10 segundos de timeout
         });
 
-        const data = response.data;
+        if (!response.ok) {
+            const errorBody = await response.text();
+            console.error(`Erro na API da ${exchangeName}. Status: ${response.status}. Body: ${errorBody}`);
+            return null;
+        }
+        
+        const data = await response.json();
         const price = config.getPrice(data);
 
         if (price === null || isNaN(price)) {
@@ -65,9 +70,8 @@ async function fetchPriceFromExchange(exchangeName: ExchangeName): Promise<numbe
         return price;
 
     } catch (error) {
-        if (axios.isAxiosError(error)) {
-            console.error(`Erro do Axios ao buscar preço da ${exchangeName}: ${error.message}`);
-            console.error(`Status: ${error.response?.status}, Data: ${JSON.stringify(error.response?.data)}`);
+        if (error instanceof Error) {
+            console.error(`Erro ao buscar preço da ${exchangeName}: ${error.name} - ${error.message}`);
         } else {
              console.error(`Erro desconhecido ao buscar preço da ${exchangeName}:`, error);
         }

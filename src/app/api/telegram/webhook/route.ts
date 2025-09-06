@@ -117,8 +117,9 @@ Você pode usar os comandos em um chat privado comigo ou em um grupo onde eu fui
 
                     try {
                         const prices = await getUsdtBrlPrices();
-                        if (!prices || prices.some(p => p.buyPrice === null)) {
-                             throw new Error("Could not fetch one or more prices.");
+                        // Verifica se TODAS as cotações falharam
+                        if (!prices || prices.every(p => p.buyPrice === null)) {
+                             throw new Error("Could not fetch any prices.");
                         }
                         
                         const exchangeRates: Exchange[] = prices.map(price => {
