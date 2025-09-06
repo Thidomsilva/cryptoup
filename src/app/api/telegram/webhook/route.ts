@@ -1,6 +1,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
-import TelegramBot, { Update } from 'node-telegram-bot-api';
+const TelegramBot = require('node-telegram-bot-api');
+import type { Update } from 'node-telegram-bot-api';
 import { getUsdtBrlPrices, runSimulation } from '@/app/actions';
 import type { Exchange, SimulationResult, ExchangeDetails } from '@/lib/types';
 import { BinanceIcon } from '@/components/icons/binance-icon';
@@ -20,7 +21,7 @@ const EXCHANGES: ExchangeDetails[] = [
 ];
 
 // --- Funções de Formatação ---
-async function formatResults(bot: TelegramBot, results: SimulationResult[], amount: number, currentPicnicPrice: number): Promise<string> {
+async function formatResults(bot: any, results: SimulationResult[], amount: number, currentPicnicPrice: number): Promise<string> {
     if (!results.length) {
         return "Não foi possível obter os resultados da simulação. Tente novamente mais tarde.";
     }
@@ -65,13 +66,16 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ status: 'error', message: 'Bot token not configured' }, { status: 500 });
     }
 
-    const bot = new TelegramBot(token);
-    let picnicPrice = 5.25; // Preço padrão
+    try {
+        const body: Update = await request.json();
+        const bot = new TelegramBot(token);
 
-    // --- Comandos do Bot ---
-    bot.onText(/\/(start|help)/, async (msg) => {
-        const chatId = msg.chat.id;
-        const helpMessage = `
+        let picnicPrice = 5.25; // Preço padrão
+
+        // --- Comandos do Bot ---
+        bot.onText(/\/(start|help)/, async (msg: any) => {
+            const chatId = msg.chat.id;
+            const helpMessage = `
 *Bem-vindo ao Bot de Simulação de Arbitragem USDT/BRL!*
 
 Você pode usar os comandos em um chat privado comigo ou em um grupo onde eu fui adicionado. A análise será sempre postada no canal ${CHANNEL_ID}.
@@ -85,73 +89,71 @@ Você pode usar os comandos em um chat privado comigo ou em um grupo onde eu fui
 
 - \`/help\`: Mostra esta mensagem de ajuda.
     `;
-        await bot.sendMessage(chatId, helpMessage, { parse_mode: 'Markdown' });
-    });
+            await bot.sendMessage(chatId, helpMessage, { parse_mode: 'Markdown' });
+        });
 
-    bot.onText(/\/cotap (.+)/, async (msg, match) => {
-        const chatId = msg.chat.id;
-        if (!match || !match[1]) {
-            await bot.sendMessage(chatId, "Comando inválido. Use o formato: `/cotap <valor>`");
-            return;
-        }
+        bot.onText(/\/cotap (.+)/, async (msg: any, match: any) => {
+            const chatId = msg.chat.id;
+            if (!match || !match[1]) {
+                await bot.sendMessage(chatId, "Comando inválido. Use o formato: `/cotap <valor>`");
+                return;
+            }
+            
+            const amount = parseFloat(match[1]);
+
+            if (isNaN(amount) || amount <= 0) {
+                await bot.sendMessage(chatId, "Valor inválido. Use, por exemplo: `/cotap 5000`");
+                return;
+            }
+
+            await bot.sendMessage(chatId, `🔍 Buscando cotações para ${amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}...`);
+
+            try {
+                const prices = await getUsdtBrlPrices();
+                if (!prices || prices.length === 0) {
+                    throw new Error("Could not fetch prices");
+                }
+                
+                const exchangeRates: Exchange[] = prices.map(price => {
+                    const details = EXCHANGES.find(e => e.name === price.name);
+                    return details ? { ...details, buyPrice: price.buyPrice } : null;
+                }).filter((e): e is Exchange => e !== null);
+
+                const results = await runSimulation(amount, exchangeRates, picnicPrice);
+                const responseMessage = await formatResults(bot, results, amount, picnicPrice);
+                
+                await bot.sendMessage(chatId, responseMessage, { parse_mode: 'Markdown' });
+                
+                const channelChat = await bot.getChat(CHANNEL_ID).catch(() => null);
+                if (channelChat && chatId !== channelChat.id) {
+                     await bot.sendMessage(CHANNEL_ID, responseMessage, { parse_mode: 'Markdown' });
+                }
+
+            } catch (error) {
+                console.error("Erro ao processar /cotap:", error);
+                const errorMsg = "❌ Erro: Não foi possível buscar as cotações. As APIs podem estar indisponíveis. Tente novamente mais tarde.";
+                await bot.sendMessage(chatId, errorMsg);
+            }
+        });
+
+        bot.onText(/\/setpicnic (.+)/, async (msg: any, match: any) => {
+            const chatId = msg.chat.id;
+            if (!match || !match[1]) {
+                await bot.sendMessage(chatId, "Comando inválido. Use o formato: `/setpicnic <preço>`");
+                return;
+            }
+
+            const price = parseFloat(match[1]);
+
+             if (isNaN(price) || price <= 0) {
+                await bot.sendMessage(chatId, "Preço inválido. Use, por exemplo: `/setpicnic 5.28`");
+                return;
+            }
+            picnicPrice = price; // Atualiza o preço apenas para a simulação atual
+            const successMsg = `✅ Preço de venda na Picnic *temporariamente* atualizado para *${price.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}* para a próxima simulação.`;
+            await bot.sendMessage(chatId, successMsg, { parse_mode: 'Markdown' });
+        });
         
-        const amount = parseFloat(match[1]);
-
-        if (isNaN(amount) || amount <= 0) {
-            await bot.sendMessage(chatId, "Valor inválido. Use, por exemplo: `/cotap 5000`");
-            return;
-        }
-
-        await bot.sendMessage(chatId, `🔍 Buscando cotações para ${amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}...`);
-
-        try {
-            const prices = await getUsdtBrlPrices();
-            if (!prices || prices.length === 0) {
-                throw new Error("Could not fetch prices");
-            }
-            
-            const exchangeRates: Exchange[] = prices.map(price => {
-                const details = EXCHANGES.find(e => e.name === price.name);
-                return details ? { ...details, buyPrice: price.buyPrice } : null;
-            }).filter((e): e is Exchange => e !== null);
-
-            const results = await runSimulation(amount, exchangeRates, picnicPrice);
-            const responseMessage = await formatResults(bot, results, amount, picnicPrice);
-            
-            await bot.sendMessage(chatId, responseMessage, { parse_mode: 'Markdown' });
-            
-            const channelChat = await bot.getChat(CHANNEL_ID).catch(() => null);
-            if (channelChat && chatId !== channelChat.id) {
-                 await bot.sendMessage(CHANNEL_ID, responseMessage, { parse_mode: 'Markdown' });
-            }
-
-        } catch (error) {
-            console.error("Erro ao processar /cotap:", error);
-            const errorMsg = "❌ Erro: Não foi possível buscar as cotações. As APIs podem estar indisponíveis. Tente novamente mais tarde.";
-            await bot.sendMessage(chatId, errorMsg);
-        }
-    });
-
-    bot.onText(/\/setpicnic (.+)/, async (msg, match) => {
-        const chatId = msg.chat.id;
-        if (!match || !match[1]) {
-            await bot.sendMessage(chatId, "Comando inválido. Use o formato: `/setpicnic <preço>`");
-            return;
-        }
-
-        const price = parseFloat(match[1]);
-
-         if (isNaN(price) || price <= 0) {
-            await bot.sendMessage(chatId, "Preço inválido. Use, por exemplo: `/setpicnic 5.28`");
-            return;
-        }
-        picnicPrice = price; // Atualiza o preço apenas para a simulação atual
-        const successMsg = `✅ Preço de venda na Picnic *temporariamente* atualizado para *${price.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}* para a próxima simulação.`;
-        await bot.sendMessage(chatId, successMsg, { parse_mode: 'Markdown' });
-    });
-    
-    try {
-        const body: Update = await request.json();
         bot.processUpdate(body);
         return NextResponse.json({ status: 'ok' });
     } catch (error) {
