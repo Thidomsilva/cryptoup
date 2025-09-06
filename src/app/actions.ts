@@ -2,7 +2,7 @@
 
 import type { GetCryptoPricesOutput, ExchangeName } from '@/lib/types';
 
-// Helper to map API exchange names to our internal ExchangeName type
+// Helper para mapear nomes de exchanges da API para nosso tipo interno ExchangeName
 function mapExchangeName(apiName: string): ExchangeName | null {
     const lowerCaseApiName = apiName.toLowerCase();
     if (lowerCaseApiName.includes('binance')) return 'Binance';
@@ -14,62 +14,72 @@ function mapExchangeName(apiName: string): ExchangeName | null {
 
 export async function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
     try {
-        // We will use the CoinGecko API, which is a popular free crypto data aggregator.
-        // We are fetching the tickers for Tether (USDT).
+        // Usaremos a API da CoinGecko, um popular agregador de dados de criptomoedas gratuito.
+        // Estamos buscando os tickers do Tether (USDT).
         const response = await fetch('https://api.coingecko.com/api/v3/coins/tether/tickers');
         
         if (!response.ok) {
-            console.error('Failed to fetch from CoinGecko API:', response.status, response.statusText);
-            // Fallback to avoid crashing the app, though in a real scenario,
-            // we might want more robust error handling or a retry mechanism.
+            console.error('Falha ao buscar da API CoinGecko:', response.status, response.statusText);
+            // Fallback para evitar que o aplicativo quebre, embora em um cenário real,
+            // pudéssemos querer um tratamento de erro mais robusto ou um mecanismo de nova tentativa.
             return [];
         }
 
         const data = await response.json();
 
-        const brlTickers = data.tickers.filter(
-            (ticker: any) => ticker.target === 'BRL'
-        );
+        // Encontra um ticker de referência para a conversão BRL/USD, se necessário.
+        const usdtToBrlRate = data.tickers.find(
+            (ticker: any) => ticker.target === 'BRL' && ticker.market.name.toLowerCase().includes('binance')
+        )?.converted_last?.brl;
+        
+        if (!usdtToBrlRate) {
+            console.error("Não foi possível encontrar uma taxa de conversão de BRL. Usando um valor padrão.");
+             // Se não encontrarmos uma taxa, não podemos continuar com a conversão de USD.
+        }
 
+        const allExchangeNames: ExchangeName[] = ['Binance', 'Bybit', 'KuCoin', 'Coinbase'];
         const prices: GetCryptoPricesOutput = [];
         const addedExchanges = new Set<ExchangeName>();
 
-        for (const ticker of brlTickers) {
-            const exchangeName = mapExchangeName(ticker.market.name);
-            if (exchangeName && !addedExchanges.has(exchangeName)) {
-                prices.push({
-                    name: exchangeName,
-                    // 'converted_last' provides the price in the target currency (BRL)
-                    buyPrice: ticker.converted_last.brl,
-                });
-                addedExchanges.add(exchangeName);
-            }
-        }
+        for (const exchangeName of allExchangeNames) {
+            // Tenta encontrar um par direto com BRL primeiro
+            const brlTicker = data.tickers.find(
+                (ticker: any) => ticker.target === 'BRL' && mapExchangeName(ticker.market.name) === exchangeName
+            );
 
-        // Ensure we have prices for all our exchanges, even if the API doesn't return them
-        // This is a simple fallback. A more advanced version could try other API endpoints or sources.
-        const allExchangeNames: ExchangeName[] = ['Binance', 'Bybit', 'KuCoin', 'Coinbase'];
-        for (const name of allExchangeNames) {
-            if (!addedExchanges.has(name)) {
-                // Try to find a USD price and convert it as a last resort
-                const usdTicker = data.tickers.find((t: any) => mapExchangeName(t.market.name) === name && t.target === 'USD');
+            if (brlTicker) {
+                if (!addedExchanges.has(exchangeName)) {
+                    prices.push({
+                        name: exchangeName,
+                        // 'converted_last' fornece o preço na moeda de destino (BRL)
+                        buyPrice: brlTicker.converted_last.brl,
+                    });
+                    addedExchanges.add(exchangeName);
+                }
+            } else if (usdtToBrlRate) {
+                // Se não houver par BRL, tenta encontrar um par com USD e faz a conversão
+                const usdTicker = data.tickers.find(
+                    (ticker: any) => ticker.target === 'USD' && mapExchangeName(ticker.market.name) === exchangeName
+                );
+
                 if (usdTicker) {
-                    // This is a rough estimation, assuming 1 USD is close to the BRL price of USDT.
-                    // Not perfect, but better than nothing.
-                     const brlPriceOfUsd = data.tickers.find((t: any) => t.base === 'USDT' && t.target === 'BRL')?.converted_last.brl || 5.2;
-                     prices.push({ name, buyPrice: usdTicker.converted_last.usd * brlPriceOfUsd });
+                     if (!addedExchanges.has(exchangeName)) {
+                        prices.push({
+                            name: exchangeName,
+                            buyPrice: usdTicker.converted_last.usd * usdtToBrlRate,
+                        });
+                        addedExchanges.add(exchangeName);
+                    }
                 } else {
-                    // If no price is found, we won't include this exchange in the results.
-                    console.warn(`Could not find a BRL or USD price for ${name} on CoinGecko.`);
+                     console.warn(`Não foi possível encontrar um preço BRL ou USD para ${exchangeName} na CoinGecko.`);
                 }
             }
         }
 
-
         return prices;
     } catch (error) {
-        console.error('Error fetching or processing crypto prices:', error);
-        // Return an empty array or handle the error as appropriate
+        console.error('Erro ao buscar ou processar preços de criptomoedas:', error);
+        // Retorna um array vazio ou trata o erro conforme apropriado
         return [];
     }
 }
