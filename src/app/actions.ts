@@ -18,6 +18,7 @@ async function getBrlUsdRate(tickers: any[]): Promise<number | null> {
         (ticker: any) => ticker.target === 'BRL' && ticker.market.name.toLowerCase().includes('binance')
     );
     if (brlTicker?.converted_last?.brl) {
+        // This is BRL price for 1 USDT, we need BRL price for 1 USD
         return brlTicker.converted_last.brl / brlTicker.converted_last.usd;
     }
     
@@ -83,7 +84,21 @@ export async function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
                     addedExchanges.add(exchangeName);
                 }
             } else {
-                 console.warn(`Could not find a USD price for ${exchangeName} on CoinGecko.`);
+                 // Try to find a BRL ticker as a fallback for this specific exchange
+                 const brlTickerForExchange = tickers.find(
+                    (ticker: any) => ticker.target === 'BRL' && mapExchangeName(ticker.market.name) === exchangeName
+                 );
+                 if (brlTickerForExchange && brlTickerForExchange.converted_last?.brl) {
+                      if (!addedExchanges.has(exchangeName)) {
+                        prices.push({
+                            name: exchangeName,
+                            buyPrice: brlTickerForExchange.converted_last.brl,
+                        });
+                        addedExchanges.add(exchangeName);
+                    }
+                 } else {
+                    console.warn(`Could not find a USD or BRL price for ${exchangeName} on CoinGecko.`);
+                 }
             }
         }
 
