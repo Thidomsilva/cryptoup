@@ -11,6 +11,7 @@ import { CoinbaseIcon } from '@/components/icons/coinbase-icon';
 
 // --- Configuração ---
 const token = process.env.TELEGRAM_BOT_TOKEN;
+const webhookUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/telegram/webhook`;
 const CHANNEL_ID = '@upsurechanel'; // ID do canal de destino
 
 const EXCHANGES: ExchangeDetails[] = [
@@ -20,6 +21,8 @@ const EXCHANGES: ExchangeDetails[] = [
     { name: 'Coinbase', fee: 0.005, icon: CoinbaseIcon },
 ];
 
+let picnicPrice = 5.25; // Preço padrão, pode ser sobreposto pelo comando /setpicnic
+
 // --- Funções de Formatação ---
 async function formatResults(bot: any, results: SimulationResult[], amount: number, currentPicnicPrice: number): Promise<string> {
     if (!results.length) {
@@ -27,8 +30,8 @@ async function formatResults(bot: any, results: SimulationResult[], amount: numb
     }
 
     const bestResult = results
-        .filter(r => r.profit !== null)
-        .reduce((max, current) => ((current.profit ?? -Infinity) > (max.profit ?? -Infinity) ? current : max), results[0]);
+        .filter(r => r.profit !== null && r.profit > 0)
+        .reduce((max, current) => ((current.profit ?? -Infinity) > (max.profit ?? -Infinity) ? current : max), null);
 
     let message = `*Simulação de Arbitragem para ${amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}*\n`;
     message += `_Preço de venda Picnic: ${currentPicnicPrice.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}_\n\n`;
@@ -40,7 +43,7 @@ async function formatResults(bot: any, results: SimulationResult[], amount: numb
              return;
         }
 
-        const isBest = result.exchangeName === bestResult.exchangeName && bestResult.profit! > 0;
+        const isBest = bestResult && result.exchangeName === bestResult.exchangeName;
         const profitIcon = result.profit > 0 ? '🟢' : '🔴';
 
         message += `*${result.exchangeName}* ${isBest ? '⭐️ *Melhor Opção*' : ''}\n`;
@@ -67,15 +70,19 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-        const body: Update = await request.json();
         const bot = new TelegramBot(token);
+        const body: Update = await request.json();
 
-        let picnicPrice = 5.25; // Preço padrão
+        if (body.message) {
+            const { text, chat: { id: chatId } } = body.message;
 
-        // --- Comandos do Bot ---
-        bot.onText(/\/(start|help)/, async (msg: any) => {
-            const chatId = msg.chat.id;
-            const helpMessage = `
+            if (text) {
+                const startHelpRegex = /\/(start|help)/;
+                const cotapRegex = /\/cotap (.+)/;
+                const setPicnicRegex = /\/setpicnic (.+)/;
+
+                if (startHelpRegex.test(text)) {
+                    const helpMessage = `
 *Bem-vindo ao Bot de Simulação de Arbitragem USDT/BRL!*
 
 Você pode usar os comandos em um chat privado comigo ou em um grupo onde eu fui adicionado. A análise será sempre postada no canal ${CHANNEL_ID}.
@@ -84,78 +91,81 @@ Você pode usar os comandos em um chat privado comigo ou em um grupo onde eu fui
 - \`/cotap <valor>\`: Simula a operação. A resposta será enviada no chat onde o comando foi executado e também postada no canal.
   _Exemplo: \`/cotap 5000\`_
   
-- \`/setpicnic <preço>\`: Define o preço de venda do USDT na Picnic para as simulações. Este valor é temporário e resetado.
+- \`/setpicnic <preço>\`: Define o preço de venda do USDT na Picnic para as simulações. Este valor é temporário e resetado a cada reinicialização do servidor.
   _Exemplo: \`/setpicnic 5.28\`_
 
 - \`/help\`: Mostra esta mensagem de ajuda.
     `;
-            await bot.sendMessage(chatId, helpMessage, { parse_mode: 'Markdown' });
-        });
+                    await bot.sendMessage(chatId, helpMessage, { parse_mode: 'Markdown' });
+                } else if (cotapRegex.test(text)) {
+                    const match = text.match(cotapRegex);
+                    const amountStr = match ? match[1] : null;
 
-        bot.onText(/\/cotap (.+)/, async (msg: any, match: any) => {
-            const chatId = msg.chat.id;
-            if (!match || !match[1]) {
-                await bot.sendMessage(chatId, "Comando inválido. Use o formato: `/cotap <valor>`");
-                return;
-            }
-            
-            const amount = parseFloat(match[1]);
+                    if (!amountStr) {
+                        await bot.sendMessage(chatId, "Comando inválido. Use o formato: `/cotap <valor>`");
+                        return NextResponse.json({ status: 'ok' });
+                    }
+                    
+                    const amount = parseFloat(amountStr);
 
-            if (isNaN(amount) || amount <= 0) {
-                await bot.sendMessage(chatId, "Valor inválido. Use, por exemplo: `/cotap 5000`");
-                return;
-            }
+                    if (isNaN(amount) || amount <= 0) {
+                        await bot.sendMessage(chatId, "Valor inválido. Use, por exemplo: `/cotap 5000`");
+                        return NextResponse.json({ status: 'ok' });
+                    }
 
-            await bot.sendMessage(chatId, `🔍 Buscando cotações para ${amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}...`);
+                    await bot.sendMessage(chatId, `🔍 Buscando cotações para ${amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}...`);
 
-            try {
-                const prices = await getUsdtBrlPrices();
-                if (!prices || prices.length === 0) {
-                    throw new Error("Could not fetch prices");
+                    try {
+                        const prices = await getUsdtBrlPrices();
+                        if (!prices || prices.length === 0) {
+                            throw new Error("Could not fetch prices");
+                        }
+                        
+                        const exchangeRates: Exchange[] = prices.map(price => {
+                            const details = EXCHANGES.find(e => e.name === price.name);
+                            return details ? { ...details, buyPrice: price.buyPrice } : null;
+                        }).filter((e): e is Exchange => e !== null);
+
+                        const results = await runSimulation(amount, exchangeRates, picnicPrice);
+                        const responseMessage = await formatResults(bot, results, amount, picnicPrice);
+                        
+                        await bot.sendMessage(chatId, responseMessage, { parse_mode: 'Markdown' });
+                        
+                        // Postar no canal se o comando não veio do próprio canal
+                        const channelChat = await bot.getChat(CHANNEL_ID).catch(() => null);
+                        if (channelChat && String(chatId) !== String(channelChat.id)) {
+                             await bot.sendMessage(CHANNEL_ID, responseMessage, { parse_mode: 'Markdown' });
+                        }
+
+                    } catch (error) {
+                        console.error("Erro ao processar /cotap:", error);
+                        const errorMsg = "❌ Erro: Não foi possível buscar as cotações. As APIs podem estar indisponíveis. Tente novamente mais tarde.";
+                        await bot.sendMessage(chatId, errorMsg);
+                    }
+                } else if (setPicnicRegex.test(text)) {
+                    const match = text.match(setPicnicRegex);
+                    const priceStr = match ? match[1] : null;
+
+                    if (!priceStr) {
+                        await bot.sendMessage(chatId, "Comando inválido. Use o formato: `/setpicnic <preço>`");
+                        return NextResponse.json({ status: 'ok' });
+                    }
+
+                    const price = parseFloat(priceStr);
+
+                     if (isNaN(price) || price <= 0) {
+                        await bot.sendMessage(chatId, "Preço inválido. Use, por exemplo: `/setpicnic 5.28`");
+                        return NextResponse.json({ status: 'ok' });
+                    }
+                    picnicPrice = price; // Atualiza o preço globalmente (enquanto o servidor estiver ativo)
+                    const successMsg = `✅ Preço de venda na Picnic *temporariamente* atualizado para *${price.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}*.`;
+                    await bot.sendMessage(chatId, successMsg, { parse_mode: 'Markdown' });
                 }
-                
-                const exchangeRates: Exchange[] = prices.map(price => {
-                    const details = EXCHANGES.find(e => e.name === price.name);
-                    return details ? { ...details, buyPrice: price.buyPrice } : null;
-                }).filter((e): e is Exchange => e !== null);
-
-                const results = await runSimulation(amount, exchangeRates, picnicPrice);
-                const responseMessage = await formatResults(bot, results, amount, picnicPrice);
-                
-                await bot.sendMessage(chatId, responseMessage, { parse_mode: 'Markdown' });
-                
-                const channelChat = await bot.getChat(CHANNEL_ID).catch(() => null);
-                if (channelChat && chatId !== channelChat.id) {
-                     await bot.sendMessage(CHANNEL_ID, responseMessage, { parse_mode: 'Markdown' });
-                }
-
-            } catch (error) {
-                console.error("Erro ao processar /cotap:", error);
-                const errorMsg = "❌ Erro: Não foi possível buscar as cotações. As APIs podem estar indisponíveis. Tente novamente mais tarde.";
-                await bot.sendMessage(chatId, errorMsg);
             }
-        });
-
-        bot.onText(/\/setpicnic (.+)/, async (msg: any, match: any) => {
-            const chatId = msg.chat.id;
-            if (!match || !match[1]) {
-                await bot.sendMessage(chatId, "Comando inválido. Use o formato: `/setpicnic <preço>`");
-                return;
-            }
-
-            const price = parseFloat(match[1]);
-
-             if (isNaN(price) || price <= 0) {
-                await bot.sendMessage(chatId, "Preço inválido. Use, por exemplo: `/setpicnic 5.28`");
-                return;
-            }
-            picnicPrice = price; // Atualiza o preço apenas para a simulação atual
-            const successMsg = `✅ Preço de venda na Picnic *temporariamente* atualizado para *${price.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}* para a próxima simulação.`;
-            await bot.sendMessage(chatId, successMsg, { parse_mode: 'Markdown' });
-        });
+        }
         
-        bot.processUpdate(body);
         return NextResponse.json({ status: 'ok' });
+
     } catch (error) {
         console.error('Erro no corpo do webhook:', error);
         return NextResponse.json({ status: 'error', message: 'Invalid request body' }, { status: 400 });
@@ -165,21 +175,19 @@ Você pode usar os comandos em um chat privado comigo ou em um grupo onde eu fui
 
 // Rota GET para registrar o webhook (chame isso uma vez)
 export async function GET(request: NextRequest) {
-    if (!token) {
-        return NextResponse.json({ success: false, message: 'Bot token not configured' }, { status: 500 });
+    if (!token || !webhookUrl) {
+        return NextResponse.json({ 
+            success: false, 
+            message: 'Bot token or Webhook URL not configured in environment variables.' 
+        }, { status: 500 });
     }
     const bot = new TelegramBot(token);
+    
     try {
-        const host = request.headers.get('host');
-        if (!host) {
-            throw new Error('Não foi possível determinar a URL do host a partir da requisição.');
-        }
-        
-        const protocol = host.includes('localhost') ? 'http' : 'https';
-        const webhookUrl = `${protocol}://${host}/api/telegram/webhook`;
-        
+        // Registra o webhook
         await bot.setWebHook(webhookUrl);
         
+        // Registra os comandos
         await bot.setMyCommands([
             { command: 'cotap', description: 'Simula arbitragem (ex: /cotap 5000)' },
             { command: 'setpicnic', description: 'Define o preço de venda da Picnic (ex: /setpicnic 5.28)' },
@@ -188,11 +196,15 @@ export async function GET(request: NextRequest) {
 
         return NextResponse.json({ 
             success: true, 
-            message: `Webhook configurado com sucesso para ${webhookUrl} e comandos registrados.` 
+            message: `Webhook configured successfully for ${webhookUrl}. Commands registered.` 
         });
     } catch (error) {
-        console.error('Erro ao configurar o webhook:', error);
-        const errorMessage = error instanceof Error ? error.message : 'Um erro desconhecido ocorreu.';
-        return NextResponse.json({ success: false, message: 'Falha ao configurar o webhook.', error: errorMessage }, { status: 500 });
+        console.error('Error setting webhook:', error);
+        const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
+        return NextResponse.json({ 
+            success: false, 
+            message: 'Failed to set webhook.', 
+            error: errorMessage 
+        }, { status: 500 });
     }
 }
