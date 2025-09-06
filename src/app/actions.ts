@@ -6,13 +6,24 @@ import type { GetCryptoPricesOutput, ExchangeName } from '@/lib/types';
 const exchangeApiConfig = {
     Binance: {
         url: 'https://api.binance.com/api/v3/ticker/24hr?symbol=USDTBRL',
-        // A API da Binance retorna um objeto mais completo, o preço está em 'lastPrice'
-        getPrice: (data: any) => data?.lastPrice ? parseFloat(data.lastPrice) : null
+        // A API da Binance retorna um objeto (se o símbolo for encontrado) ou um array (se múltiplos símbolos forem pedidos). 
+        // Para um único símbolo, esperamos um objeto com 'lastPrice'.
+        getPrice: (data: any) => {
+            if (data && typeof data === 'object' && !Array.isArray(data) && data.lastPrice) {
+                return parseFloat(data.lastPrice);
+            }
+            return null;
+        }
     },
     Bybit: {
         url: 'https://api.bybit.com/v5/market/tickers?category=spot&symbol=USDTBRL',
         // A API da Bybit retorna { result: { list: [...] } }
-        getPrice: (data: any) => data?.result?.list?.[0]?.lastPrice ? parseFloat(data.result.list[0].lastPrice) : null
+        getPrice: (data: any) => {
+             if (data?.result?.list && data.result.list.length > 0 && data.result.list[0].lastPrice) {
+                return parseFloat(data.result.list[0].lastPrice);
+            }
+            return null;
+        }
     },
     KuCoin: {
         url: 'https://api.kucoin.com/api/v1/market/orderbook/level1?symbol=USDT-BRL',
@@ -42,12 +53,13 @@ async function fetchPriceFromExchange(exchangeName: ExchangeName): Promise<numbe
             cache: 'no-store' // Força a busca em tempo real, desabilitando o cache.
         });
 
+        const responseText = await response.text();
         if (!response.ok) {
-            console.warn(`Falha ao buscar preço da ${exchangeName}. Status: ${response.status}. Body: ${await response.text()}`);
+            console.warn(`Falha ao buscar preço da ${exchangeName}. Status: ${response.status}. Body: ${responseText}`);
             return null;
         }
 
-        const data = await response.json();
+        const data = JSON.parse(responseText);
         const price = config.getPrice(data);
 
         if (price === null || isNaN(price)) {
