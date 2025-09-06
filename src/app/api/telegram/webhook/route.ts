@@ -28,7 +28,7 @@ const EXCHANGES: ExchangeDetails[] = [
 let picnicPrice = 5.25; // Preço padrão, pode ser alterado por comando
 
 // --- Funções de Formatação ---
-function formatResults(results: SimulationResult[], amount: number, currentPicnicPrice: number): string {
+async function formatResults(results: SimulationResult[], amount: number, currentPicnicPrice: number): Promise<string> {
     if (!results.length) {
         return "Não foi possível obter os resultados da simulação. Tente novamente mais tarde.";
     }
@@ -56,12 +56,12 @@ function formatResults(results: SimulationResult[], amount: number, currentPicni
         message += `  - Lucro/Prejuízo: ${profitIcon} *${result.profit.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}* (${result.profitPercentage!.toFixed(2)}%)\n\n`;
     });
     
-    bot.getMe().then(me => {
+    try {
+        const me = await bot.getMe();
         message += `_Análise feita por @${me.username || 'braitsure_bot'}_`;
-    }).catch(() => {
+    } catch {
         message += `_Análise feita por @braitsure_bot_`;
-    })
-
+    }
 
     return message;
 }
@@ -103,7 +103,7 @@ export async function POST(request: NextRequest) {
                 }).filter((e): e is Exchange => e !== null);
 
                 const results = await runSimulation(amount, exchangeRates, picnicPrice);
-                const responseMessage = formatResults(results, amount, picnicPrice);
+                const responseMessage = await formatResults(results, amount, picnicPrice);
                 
                 // Envia a resposta para o usuário que pediu
                 await bot.sendMessage(chatId, responseMessage, { parse_mode: 'Markdown' });
