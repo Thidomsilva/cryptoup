@@ -15,23 +15,7 @@ import { KucoinIcon } from './icons/kucoin-icon';
 import { CoinbaseIcon } from './icons/coinbase-icon';
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
-
-// This function is now local to the component
-function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
-    return new Promise(resolve => {
-        // In a real application, you would fetch data from exchange APIs.
-        // For this simulation, we'll generate realistic but random prices.
-        const basePrice = 5.20;
-        const prices: GetCryptoPricesOutput = [
-            { name: 'Binance', buyPrice: basePrice + (Math.random() - 0.5) * 0.05 },
-            { name: 'Bybit', buyPrice: basePrice + (Math.random() - 0.5) * 0.05 },
-            { name: 'KuCoin', buyPrice: basePrice + (Math.random() - 0.5) * 0.05 },
-            { name: 'Coinbase', buyPrice: basePrice + (Math.random() - 0.5) * 0.05 },
-        ];
-        resolve(prices);
-    });
-}
-
+import { getUsdtBrlPrices } from "@/app/actions";
 
 const EXCHANGES: ExchangeDetails[] = [
     { name: 'Binance', fee: 0.001, icon: BinanceIcon },
@@ -136,19 +120,10 @@ export default function ArbitrageSimulator() {
     const { toast } = useToast();
     const scrollAreaRef = useRef<HTMLDivElement>(null);
     
-    // The prices are now state of the component
-    const [exchangePrices, setExchangePrices] = useState<GetCryptoPricesOutput>([]);
 
     const addHistory = useCallback((component: React.ReactNode) => {
         setHistory(prev => [...prev, { id: Date.now() + Math.random(), component }]);
     }, []);
-
-    // Hydrate the random values on the client
-    useEffect(() => {
-        getUsdtBrlPrices().then(prices => {
-            setExchangePrices(prices);
-        });
-    }, [])
 
     const runCotaP = useCallback(async (amountStr: string) => {
         const amount = parseFloat(amountStr);
@@ -165,18 +140,22 @@ export default function ArbitrageSimulator() {
         addHistory(<LoadingSkeleton />);
 
         try {
-            // We use the state that is hydrated on the client
-            const prices = exchangePrices;
+            const prices = await getUsdtBrlPrices();
+
+            if (!prices || prices.length === 0) {
+                 throw new Error("Could not fetch prices");
+            }
 
             const exchangeDataMap = new Map(EXCHANGES.map(e => [e.name, e]));
 
             const exchangeRates: Exchange[] = prices.map(price => {
                 const details = exchangeDataMap.get(price.name);
                 if (!details) {
-                    throw new Error(`Details for exchange ${price.name} not found`);
+                    // Silently ignore exchanges we don't have details for
+                    return null;
                 }
                 return { ...details, buyPrice: price.buyPrice };
-            });
+            }).filter((e): e is Exchange => e !== null);
 
             const results: SimulationResult[] = exchangeRates.map(exchange => {
                 const usdtBought = amount / exchange.buyPrice;
@@ -197,9 +176,6 @@ export default function ArbitrageSimulator() {
                 };
             });
             
-            // Re-fetch prices for next simulation after current one is displayed
-            getUsdtBrlPrices().then(prices => setExchangePrices(prices));
-
             setHistory(prev => prev.slice(0, -1)); // Remove skeleton
             addHistory(<ResultsDisplay results={results} />);
         } catch(error) {
@@ -207,14 +183,14 @@ export default function ArbitrageSimulator() {
              toast({
                 variant: "destructive",
                 title: "Error fetching prices",
-                description: "Could not fetch crypto prices. Please try again later.",
+                description: "Could not fetch real-time crypto prices. Please try again later.",
             });
              console.error(error);
         } finally {
             setIsLoading(false);
         }
 
-    }, [picnicPrice, addHistory, toast, exchangePrices]);
+    }, [picnicPrice, addHistory, toast]);
 
     const runSetPicnic = useCallback((priceStr: string) => {
         const price = parseFloat(priceStr);
