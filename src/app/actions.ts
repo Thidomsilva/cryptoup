@@ -86,8 +86,8 @@ export async function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
         const prices: { [K in ExchangeName]?: { price: number, priority: number } } = {};
 
         for (const ticker of tickers) {
-            // Skip if the ticker is stale or has no volume, or if it's not a USDT pair
-            if (ticker.is_stale || ticker.converted_volume_usd < 1000 || ticker.base.toUpperCase() !== 'USDT') {
+            // Skip if the ticker is stale or has low volume
+            if (ticker.is_stale || ticker.converted_volume_usd < 1000) {
                 continue;
             }
 
@@ -97,17 +97,19 @@ export async function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
                 let currentPrice: number | null = null;
                 let priority = -1; 
 
-                // Prioritize direct BRL pairs. A price > 1 is a sanity check.
+                // Prioritize direct BRL pairs. Sanity check for a realistic price.
                 if (ticker.target.toUpperCase() === 'BRL' && ticker.last > 1) {
                      currentPrice = ticker.last;
                      priority = 1; // Higher priority for direct BRL
                 }
-                // Fallback to USD-based pair for conversion. A price around 1 is a sanity check.
-                else if (brlToUsdRate && (ticker.target.toUpperCase() === 'USDT' || ticker.target.toUpperCase() === 'USD') && ticker.last > 0.5 && ticker.last < 1.5) {
+                // Fallback to USD-based pairs for conversion.
+                // Sanity check to ensure it's a stablecoin pair (price close to 1).
+                else if (ticker.base.toUpperCase() === 'USDT' && (ticker.target.toUpperCase() === 'USDT' || ticker.target.toUpperCase() === 'USD') && ticker.last > 0.9 && ticker.last < 1.1) {
                     currentPrice = ticker.last * brlToUsdRate;
                     priority = 0; // Lower priority for converted USD
                 }
 
+                // If we found a valid price, store it only if it's better (higher priority) than what we already have.
                 if (currentPrice !== null) {
                     if (!prices[exchangeName] || priority > (prices[exchangeName]?.priority ?? -1)) {
                          prices[exchangeName] = { price: currentPrice, priority };
@@ -116,24 +118,14 @@ export async function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
             }
         }
         
-        const finalPrices: GetCryptoPricesOutput = allExchangeNames.map(name => {
-            if (prices[name]) {
-                return {
-                    name: name,
-                    buyPrice: prices[name]!.price,
-                };
-            }
-            console.warn(`Could not find a specific price for ${name}.`);
-            return {
-                name: name,
-                buyPrice: null,
-            };
-        });
-
+        // Map the found prices to the final output, ensuring all exchanges are present.
+        const finalPrices: GetCryptoPricesOutput = allExchangeNames.map(name => ({
+            name: name,
+            buyPrice: prices[name]?.price ?? null, // Return null if no valid price was found
+        }));
 
         if (finalPrices.every(p => p.buyPrice === null)) {
             console.error("Could not fetch or calculate any valid USDT prices for any exchange.");
-             return [];
         }
 
         return finalPrices;
