@@ -7,9 +7,15 @@ const exchangeApiConfig = {
     Binance: {
         url: 'https://api.binance.com/api/v3/ticker/24hr?symbol=USDTBRL',
         getPrice: (data: any) => {
+            // A API da Binance pode retornar um objeto ou um array.
             if (data && typeof data === 'object' && !Array.isArray(data) && data.lastPrice) {
                 return parseFloat(data.lastPrice);
             }
+            // Fallback para caso retorne um array com um único item.
+            if (Array.isArray(data) && data.length > 0 && data[0].symbol === 'USDTBRL' && data[0].lastPrice) {
+                return parseFloat(data[0].lastPrice);
+            }
+            console.log("Binance: Estrutura de dados inesperada:", JSON.stringify(data));
             return null;
         }
     },
@@ -19,16 +25,29 @@ const exchangeApiConfig = {
              if (data?.result?.list && data.result.list.length > 0 && data.result.list[0].lastPrice) {
                 return parseFloat(data.result.list[0].lastPrice);
             }
+            console.log("Bybit: Estrutura de dados inesperada:", JSON.stringify(data));
             return null;
         }
     },
     KuCoin: {
         url: 'https://api.kucoin.com/api/v1/market/orderbook/level1?symbol=USDT-BRL',
-        getPrice: (data: any) => data?.data?.price ? parseFloat(data.data.price) : null
+        getPrice: (data: any) => {
+            if (data?.data?.price) {
+                return parseFloat(data.data.price);
+            }
+            console.log("KuCoin: Estrutura de dados inesperada:", JSON.stringify(data));
+            return null;
+        }
     },
     Coinbase: {
         url: 'https://api.coinbase.com/v2/prices/USDT-BRL/spot',
-        getPrice: (data: any) => data?.data?.amount ? parseFloat(data.data.amount) : null
+        getPrice: (data: any) => {
+            if (data?.data?.amount) {
+                return parseFloat(data.data.amount);
+            }
+             console.log("Coinbase: Estrutura de dados inesperada:", JSON.stringify(data));
+            return null;
+        }
     }
 };
 
@@ -54,13 +73,12 @@ async function fetchPriceFromExchange(exchangeName: ExchangeName): Promise<numbe
 
     try {
         const response = await fetch(config.url, {
-            // Força a busca de um novo recurso a cada vez
             cache: 'no-store',
             headers: { 
                 'Accept': 'application/json', 
                 'User-Agent': getRandomUserAgent()
             },
-            signal: AbortSignal.timeout(15000) // 15 segundos de timeout
+            signal: AbortSignal.timeout(15000)
         });
 
         if (!response.ok) {
@@ -73,7 +91,7 @@ async function fetchPriceFromExchange(exchangeName: ExchangeName): Promise<numbe
         const price = config.getPrice(data);
 
         if (price === null || isNaN(price)) {
-            console.warn(`Não foi possível extrair o preço da resposta da ${exchangeName}. Data:`, JSON.stringify(data));
+            console.warn(`Não foi possível extrair o preço da resposta da ${exchangeName}.`);
             return null;
         }
         
