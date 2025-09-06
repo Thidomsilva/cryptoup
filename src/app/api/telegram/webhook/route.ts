@@ -9,7 +9,7 @@ import { KucoinIcon } from '@/components/icons/kucoin-icon';
 import { CoinbaseIcon } from '@/components/icons/coinbase-icon';
 
 // --- Configuração ---
-const token = process.env.TELEGRAM_BOT_TOKEN;
+const token = "8208024793:AAH_kdUGpNG5q-LQ_iOJfxZP0fDiSDGcjFU";
 const CHANNEL_ID = '@upsurechanel'; // ID do canal de destino
 
 if (!token) {
@@ -163,8 +163,20 @@ export async function GET(request: NextRequest) {
         const protocol = host.includes('localhost') ? 'http' : 'https';
         const webhookUrl = `${protocol}://${host}/api/telegram/webhook`;
         
+        // Registra o Webhook
         await bot.setWebHook(webhookUrl);
-        return NextResponse.json({ success: true, message: `Webhook configurado com sucesso para ${webhookUrl}` });
+        
+        // Registra os comandos no Telegram
+        await bot.setMyCommands([
+            { command: 'cotap', description: 'Simula arbitragem (ex: /cotap 5000)' },
+            { command: 'setpicnic', description: 'Define o preço de venda da Picnic (ex: /setpicnic 5.28)' },
+            { command: 'help', description: 'Mostra esta mensagem de ajuda' },
+        ]);
+
+        return NextResponse.json({ 
+            success: true, 
+            message: `Webhook configurado com sucesso para ${webhookUrl} e comandos registrados.` 
+        });
     } catch (error) {
         console.error('Erro ao configurar o webhook:', error);
         const errorMessage = error instanceof Error ? error.message : 'Um erro desconhecido ocorreu.';
