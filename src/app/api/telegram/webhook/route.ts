@@ -10,6 +10,7 @@ import { CoinbaseIcon } from '@/components/icons/coinbase-icon';
 
 // --- Configuração ---
 const token = process.env.TELEGRAM_BOT_TOKEN;
+const CHANNEL_ID = '@upsurechanel'; // ID do canal de destino
 
 if (!token) {
     throw new Error('O token do Telegram não foi configurado. Por favor, defina TELEGRAM_BOT_TOKEN no seu .env');
@@ -68,6 +69,8 @@ function formatResults(results: SimulationResult[], amount: number): string {
         message += `  - USDT Recebido: ${result.usdtAmount.toFixed(4)}\n`;
         message += `  - Lucro/Prejuízo: ${profitIcon} *${result.profit.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}* (${result.profitPercentage.toFixed(2)}%)\n\n`;
     });
+    
+    message += `_Análise feita por @${bot.getMe().then(me => me.username).catch(() => 'braitsure_bot')}_`;
 
     return message;
 }
@@ -98,7 +101,8 @@ export async function POST(request: NextRequest) {
 
                 const prices = await getUsdtBrlPrices();
                 if (!prices || prices.length === 0) {
-                    await bot.sendMessage(chatId, "❌ Erro: Não foi possível buscar as cotações. Tente novamente mais tarde.");
+                    const errorMsg = "❌ Erro: Não foi possível buscar as cotações. Tente novamente mais tarde.";
+                    await bot.sendMessage(chatId, errorMsg);
                     return NextResponse.json({ status: 'ok' });
                 }
 
@@ -110,8 +114,12 @@ export async function POST(request: NextRequest) {
 
                 const results = runSimulation(amount, exchangeRates);
                 const responseMessage = formatResults(results, amount);
-
+                
+                // Envia a resposta para o usuário que pediu
                 await bot.sendMessage(chatId, responseMessage, { parse_mode: 'Markdown' });
+                // Envia a mesma resposta para o canal
+                await bot.sendMessage(CHANNEL_ID, responseMessage, { parse_mode: 'Markdown' });
+
                 break;
             }
 
@@ -122,7 +130,8 @@ export async function POST(request: NextRequest) {
                     return NextResponse.json({ status: 'ok' });
                 }
                 picnicPrice = price;
-                await bot.sendMessage(chatId, `✅ Preço de venda na Picnic atualizado para *${price.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}*.`, { parse_mode: 'Markdown' });
+                const successMsg = `✅ Preço de venda na Picnic atualizado para *${price.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}*.`;
+                await bot.sendMessage(chatId, successMsg, { parse_mode: 'Markdown' });
                 break;
             }
 
@@ -132,7 +141,7 @@ export async function POST(request: NextRequest) {
 *Bem-vindo ao Bot de Simulação de Arbitragem USDT/BRL!*
 
 Comandos disponíveis:
-- \`/cotap <valor>\`: Simula uma operação de arbitragem com o valor em BRL especificado.
+- \`/cotap <valor>\`: Simula uma operação de arbitragem com o valor em BRL especificado. O resultado também será postado no canal ${CHANNEL_ID}.
   _Exemplo: \`/cotap 5000\`_
   
 - \`/setpicnic <preço>\`: Define o preço de venda do USDT na Picnic para as simulações.
