@@ -70,67 +70,19 @@ async function formatResults(results: SimulationResult[], amount: number, curren
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
-        const msg = body.message as TelegramBot.Message;
+        bot.processUpdate(body);
+        return NextResponse.json({ status: 'ok' });
 
-        if (!msg || !msg.text) {
-            return NextResponse.json({ status: 'ok' });
-        }
+    } catch (error) {
+        console.error('Erro no webhook do Telegram:', error);
+        return NextResponse.json({ status: 'error', message: 'Internal server error' });
+    }
+}
 
-        const chatId = msg.chat.id;
-        const text = msg.text;
-        const [command, ...args] = text.trim().split(/\s+/);
-
-        switch (command.toLowerCase()) {
-            case '/cotap': {
-                const amount = parseFloat(args[0]);
-                if (isNaN(amount) || amount <= 0) {
-                    await bot.sendMessage(chatId, "Valor inválido. Use, por exemplo: `/cotap 5000`");
-                    return NextResponse.json({ status: 'ok' });
-                }
-
-                await bot.sendMessage(chatId, `🔍 Buscando cotações para ${amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}...`);
-
-                const prices = await getUsdtBrlPrices();
-                if (!prices || prices.length === 0) {
-                    const errorMsg = "❌ Erro: Não foi possível buscar as cotações. As APIs podem estar indisponíveis. Tente novamente mais tarde.";
-                    await bot.sendMessage(chatId, errorMsg);
-                    return NextResponse.json({ status: 'ok' });
-                }
-                
-                const exchangeRates: Exchange[] = prices.map(price => {
-                    const details = EXCHANGES.find(e => e.name === price.name);
-                    return details ? { ...details, buyPrice: price.buyPrice } : null;
-                }).filter((e): e is Exchange => e !== null);
-
-                const results = await runSimulation(amount, exchangeRates, picnicPrice);
-                const responseMessage = await formatResults(results, amount, picnicPrice);
-                
-                // Envia a resposta para o usuário que pediu
-                await bot.sendMessage(chatId, responseMessage, { parse_mode: 'Markdown' });
-                
-                // Se o comando não foi executado no próprio canal, envia para o canal também
-                if (chatId.toString() !== CHANNEL_ID) {
-                    await bot.sendMessage(CHANNEL_ID, responseMessage, { parse_mode: 'Markdown' });
-                }
-
-                break;
-            }
-
-            case '/setpicnic': {
-                const price = parseFloat(args[0]);
-                if (isNaN(price) || price <= 0) {
-                    await bot.sendMessage(chatId, "Preço inválido. Use, por exemplo: `/setpicnic 5.28`");
-                    return NextResponse.json({ status: 'ok' });
-                }
-                picnicPrice = price;
-                const successMsg = `✅ Preço de venda na Picnic atualizado para *${price.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}*.`;
-                await bot.sendMessage(chatId, successMsg, { parse_mode: 'Markdown' });
-                break;
-            }
-
-            case '/start':
-            case '/help': {
-                const helpMessage = `
+// --- Comandos do Bot ---
+bot.onText(/\/start|\/help/, (msg) => {
+    const chatId = msg.chat.id;
+    const helpMessage = `
 *Bem-vindo ao Bot de Simulação de Arbitragem USDT/BRL!*
 
 Você pode me usar em um chat privado ou em um grupo.
@@ -143,34 +95,79 @@ Você pode me usar em um chat privado ou em um grupo.
   _Exemplo: \`/setpicnic 5.28\`_
 
 - \`/help\`: Mostra esta mensagem de ajuda.
-                `;
-                await bot.sendMessage(chatId, helpMessage, { parse_mode: 'Markdown' });
-                break;
-            }
+    `;
+    bot.sendMessage(chatId, helpMessage, { parse_mode: 'Markdown' });
+});
 
-            default:
-                await bot.sendMessage(chatId, `Comando não reconhecido: "${command}". Use /help para ver a lista de comandos.`);
-                break;
-        }
+bot.onText(/\/cotap (.+)/, async (msg, match) => {
+    const chatId = msg.chat.id;
+    const amount = parseFloat(match![1]);
 
-        return NextResponse.json({ status: 'ok' });
-
-    } catch (error) {
-        console.error('Erro no webhook do Telegram:', error);
-        // Retornar uma resposta de sucesso para o Telegram para evitar repetições,
-        // mesmo que o processamento interno falhe.
-        return NextResponse.json({ status: 'error', message: 'Internal server error' });
+    if (isNaN(amount) || amount <= 0) {
+        bot.sendMessage(chatId, "Valor inválido. Use, por exemplo: `/cotap 5000`");
+        return;
     }
-}
+
+    bot.sendMessage(chatId, `🔍 Buscando cotações para ${amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}...`);
+
+    try {
+        const prices = await getUsdtBrlPrices();
+        if (!prices || prices.length === 0) {
+            throw new Error("Could not fetch prices");
+        }
+        
+        const exchangeRates: Exchange[] = prices.map(price => {
+            const details = EXCHANGES.find(e => e.name === price.name);
+            return details ? { ...details, buyPrice: price.buyPrice } : null;
+        }).filter((e): e is Exchange => e !== null);
+
+        const results = await runSimulation(amount, exchangeRates, picnicPrice);
+        const responseMessage = await formatResults(results, amount, picnicPrice);
+        
+        // Envia a resposta para o usuário que pediu
+        await bot.sendMessage(chatId, responseMessage, { parse_mode: 'Markdown' });
+        
+        // Se o comando não foi executado no próprio canal, envia para o canal também
+        if (chatId.toString() !== CHANNEL_ID.replace('@', '')) {
+             await bot.sendMessage(CHANNEL_ID, responseMessage, { parse_mode: 'Markdown' });
+        }
+    } catch (error) {
+        console.error("Erro ao processar /cotap:", error);
+        const errorMsg = "❌ Erro: Não foi possível buscar as cotações. As APIs podem estar indisponíveis. Tente novamente mais tarde.";
+        await bot.sendMessage(chatId, errorMsg);
+    }
+});
+
+bot.onText(/\/setpicnic (.+)/, async (msg, match) => {
+    const chatId = msg.chat.id;
+    const price = parseFloat(match![1]);
+
+     if (isNaN(price) || price <= 0) {
+        bot.sendMessage(chatId, "Preço inválido. Use, por exemplo: `/setpicnic 5.28`");
+        return;
+    }
+    picnicPrice = price;
+    const successMsg = `✅ Preço de venda na Picnic atualizado para *${price.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}*.`;
+    await bot.sendMessage(chatId, successMsg, { parse_mode: 'Markdown' });
+});
+
 
 // Rota GET para registrar o webhook (chame isso uma vez)
-export async function GET() {
+export async function GET(request: NextRequest) {
     try {
-        const webhookUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/telegram/webhook`;
+        const host = request.headers.get('host');
+        if (!host) {
+            throw new Error('Não foi possível determinar a URL do host a partir da requisição.');
+        }
+
+        const protocol = host.includes('localhost') ? 'http' : 'https';
+        const webhookUrl = `${protocol}://${host}/api/telegram/webhook`;
+        
         await bot.setWebHook(webhookUrl);
-        return NextResponse.json({ success: true, message: `Webhook configurado para ${webhookUrl}` });
+        return NextResponse.json({ success: true, message: `Webhook configurado com sucesso para ${webhookUrl}` });
     } catch (error) {
         console.error('Erro ao configurar o webhook:', error);
-        return NextResponse.json({ success: false, message: 'Falha ao configurar o webhook' });
+        const errorMessage = error instanceof Error ? error.message : 'Um erro desconhecido ocorreu.';
+        return NextResponse.json({ success: false, message: 'Falha ao configurar o webhook.', error: errorMessage }, { status: 500 });
     }
 }
