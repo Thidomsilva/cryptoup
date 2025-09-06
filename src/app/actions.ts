@@ -5,9 +5,9 @@ import type { GetCryptoPricesOutput, ExchangeName } from '@/lib/types';
 // Mapeamento de nomes para URLs de API e funções de extração de preço
 const exchangeApiConfig = {
     Binance: {
-        url: 'https://api.binance.com/api/v3/ticker/price?symbol=USDTBRL',
-        // A API da Binance retorna um objeto direto { symbol, price }
-        getPrice: (data: any) => data?.price ? parseFloat(data.price) : null
+        url: 'https://api.binance.com/api/v3/ticker/24hr?symbol=USDTBRL',
+        // A API da Binance retorna um objeto mais completo, o preço está em 'lastPrice'
+        getPrice: (data: any) => data?.lastPrice ? parseFloat(data.lastPrice) : null
     },
     Bybit: {
         url: 'https://api.bybit.com/v5/market/tickers?category=spot&symbol=USDTBRL',
@@ -35,13 +35,14 @@ async function fetchPriceFromExchange(exchangeName: ExchangeName): Promise<numbe
 
     try {
         const response = await fetch(config.url, {
-            // Algumas APIs podem exigir um User-Agent
-            headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
+            headers: { 
+                'Accept': 'application/json', 
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36'
+            },
             next: { revalidate: 30 } // Cache de 30 segundos
         });
 
         if (!response.ok) {
-            // Log do erro, mas não quebra a execução para as outras
             console.warn(`Falha ao buscar preço da ${exchangeName}. Status: ${response.status}. Body: ${await response.text()}`);
             return null;
         }
