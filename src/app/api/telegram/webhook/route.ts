@@ -46,6 +46,7 @@ function runSimulation(amount: number, rates: Exchange[]): SimulationResult[] {
             finalBRL,
             profit,
             profitPercentage,
+            buyPrice: exchange.buyPrice,
         };
     });
 }
@@ -65,12 +66,17 @@ function formatResults(results: SimulationResult[], amount: number): string {
         const profitIcon = result.profit > 0 ? '🟢' : '🔴';
 
         message += `*${result.exchangeName}* ${isBest ? '⭐️ *Melhor Opção*' : ''}\n`;
-        message += `  - Compra USDT por: ${ (result.initialBRL / (result.usdtAmount / (1- (EXCHANGES.find(e=>e.name === result.exchangeName)?.fee || 0)))).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })  }\n`;
+        message += `  - Compra USDT por: ${ result.buyPrice.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })  }\n`;
         message += `  - USDT Recebido: ${result.usdtAmount.toFixed(4)}\n`;
         message += `  - Lucro/Prejuízo: ${profitIcon} *${result.profit.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}* (${result.profitPercentage.toFixed(2)}%)\n\n`;
     });
     
-    message += `_Análise feita por @${bot.getMe().then(me => me.username).catch(() => 'braitsure_bot')}_`;
+    bot.getMe().then(me => {
+        message += `_Análise feita por @${me.username || 'braitsure_bot'}_`;
+    }).catch(() => {
+        message += `_Análise feita por @braitsure_bot_`;
+    })
+
 
     return message;
 }
@@ -101,7 +107,7 @@ export async function POST(request: NextRequest) {
 
                 const prices = await getUsdtBrlPrices();
                 if (!prices || prices.length === 0) {
-                    const errorMsg = "❌ Erro: Não foi possível buscar as cotações. Tente novamente mais tarde.";
+                    const errorMsg = "❌ Erro: Não foi possível buscar as cotações. A API pode estar indisponível. Tente novamente mais tarde.";
                     await bot.sendMessage(chatId, errorMsg);
                     return NextResponse.json({ status: 'ok' });
                 }
