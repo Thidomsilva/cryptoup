@@ -39,7 +39,7 @@ async function fetchPriceFromExchange(exchangeName: ExchangeName): Promise<numbe
                 'Accept': 'application/json', 
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36'
             },
-            next: { revalidate: 30 } // Cache de 30 segundos para evitar dados antigos
+            cache: 'no-store' // Força a busca em tempo real, desabilitando o cache.
         });
 
         if (!response.ok) {
