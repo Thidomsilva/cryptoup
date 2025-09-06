@@ -50,7 +50,7 @@ export async function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
     try {
         const [brlToUsdRate, tetherResponse] = await Promise.all([
             getBrlToUsdRate(),
-            fetch('https://api.coingecko.com/api/v3/coins/tether/tickers?per_page=100')
+            fetch('https://api.coingecko.com/api/v3/coins/tether/tickers?per_page=200')
         ]);
         
         if (!tetherResponse.ok) {
@@ -72,48 +72,58 @@ export async function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
         }
 
         const allExchangeNames: ExchangeName[] = ['Binance', 'Bybit', 'KuCoin', 'Coinbase'];
-        const prices: GetCryptoPricesOutput = [];
-        const addedExchanges = new Set<ExchangeName>();
+        const prices: { [K in ExchangeName]?: { price: number, priority: number } } = {};
 
-        // We will iterate through all tickers and pick the first valid price for each exchange we need.
         for (const ticker of tickers) {
             const exchangeName = mapExchangeName(ticker.market.name);
 
-            // If we have an exchange we care about and haven't added it yet
-            if (exchangeName && allExchangeNames.includes(exchangeName) && !addedExchanges.has(exchangeName)) {
-                
-                // Prioritize direct BRL pairs if they exist and seem valid
-                if (ticker.target === 'BRL' && ticker.last > 1) { // Check if 'last' seems like a BRL price
-                     prices.push({
-                        name: exchangeName,
-                        buyPrice: ticker.last,
-                    });
-                    addedExchanges.add(exchangeName);
-                    continue; // Move to the next ticker
+            if (exchangeName && allExchangeNames.includes(exchangeName)) {
+                let currentPrice: number | null = null;
+                let priority = 0; // 0 for USD-based, 1 for BRL-based
+
+                // Prioritize direct BRL pairs
+                if (ticker.target === 'BRL' && ticker.last > 1) {
+                     currentPrice = ticker.last;
+                     priority = 1;
+                }
+                // Fallback to USD-based pair for conversion
+                else if ((ticker.target === 'USDT' || ticker.target === 'USD') && ticker.last > 0.5 && ticker.last < 1.5) {
+                    currentPrice = ticker.last * brlToUsdRate;
+                    priority = 0;
                 }
 
-                // Otherwise, use a USD-based pair for conversion
-                if ((ticker.target === 'USDT' || ticker.target === 'USD') && ticker.last > 0.5 && ticker.last < 1.5) { // Sanity check for a ~1.0 price
-                    prices.push({
-                        name: exchangeName,
-                        buyPrice: ticker.last * brlToUsdRate,
-                    });
-                    addedExchanges.add(exchangeName);
-                    continue; // Move to the next ticker
+                if (currentPrice !== null) {
+                    // If we don't have a price for this exchange yet, or if the new one is higher priority (BRL)
+                    if (!prices[exchangeName] || priority > (prices[exchangeName]?.priority ?? -1)) {
+                         prices[exchangeName] = { price: currentPrice, priority: priority };
+                    }
                 }
             }
         }
-        
-        // Final check to see if we got all exchanges we wanted
-        if (addedExchanges.size < allExchangeNames.length) {
-            console.warn("Could not find prices for all desired exchanges:", allExchangeNames.filter(e => !addedExchanges.has(e)));
+
+        const finalPrices: GetCryptoPricesOutput = allExchangeNames
+            .map(name => {
+                if (prices[name]) {
+                    return {
+                        name: name,
+                        buyPrice: prices[name]!.price,
+                    };
+                }
+                return null;
+            })
+            .filter((p): p is { name: ExchangeName; buyPrice: number; } => p !== null);
+
+
+        if (finalPrices.length < allExchangeNames.length) {
+            console.warn("Could not find prices for all desired exchanges:", allExchangeNames.filter(e => !finalPrices.some(p => p.name === e)));
         }
 
-        if (prices.length === 0) {
+        if (finalPrices.length === 0) {
             console.error("Could not fetch any valid USDT/BRL or USDT/USD quotes from the specified exchanges via CoinGecko.");
         }
 
-        return prices;
+        return finalPrices;
+
     } catch (error) {
         console.error('Error fetching or processing cryptocurrency prices:', error);
         return [];
