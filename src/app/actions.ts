@@ -1,13 +1,12 @@
 'use server';
 
-import type { GetCryptoPricesOutput, ExchangeName } from '@/lib/types';
+import type { Exchange, ExchangeName, SimulationResult, GetCryptoPricesOutput } from '@/lib/types';
 
 // Mapeamento de nomes para URLs de API e funções de extração de preço
 const exchangeApiConfig = {
     Binance: {
         url: 'https://api.binance.com/api/v3/ticker/24hr?symbol=USDTBRL',
-        // A API da Binance retorna um objeto (se o símbolo for encontrado) ou um array (se múltiplos símbolos forem pedidos). 
-        // Para um único símbolo, esperamos um objeto com 'lastPrice'.
+        // A API da Binance retorna um objeto com 'lastPrice'.
         getPrice: (data: any) => {
             if (data && typeof data === 'object' && !Array.isArray(data) && data.lastPrice) {
                 return parseFloat(data.lastPrice);
@@ -89,4 +88,42 @@ export async function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
     }));
     
     return finalPrices;
+}
+
+
+const PICNIC_SELL_FEE = 0.002;
+
+export async function runSimulation(amount: number, rates: Exchange[], picnicPrice: number): Promise<SimulationResult[]> {
+    return rates.map(exchange => {
+        if (exchange.buyPrice === null) {
+            return {
+                exchangeName: exchange.name,
+                icon: exchange.icon,
+                initialBRL: amount,
+                buyPrice: null,
+                usdtAmount: null,
+                finalBRL: null,
+                profit: null,
+                profitPercentage: null,
+            };
+        }
+
+        const usdtBought = amount / exchange.buyPrice;
+        const usdtAfterFee = usdtBought * (1 - exchange.fee);
+        const brlFromSale = usdtAfterFee * picnicPrice;
+        const finalBRL = brlFromSale * (1 - PICNIC_SELL_FEE);
+        const profit = finalBRL - amount;
+        const profitPercentage = (profit / amount) * 100;
+
+        return {
+            exchangeName: exchange.name,
+            icon: exchange.icon,
+            initialBRL: amount,
+            usdtAmount: usdtAfterFee,
+            finalBRL,
+            profit,
+            profitPercentage,
+            buyPrice: exchange.buyPrice,
+        };
+    });
 }

@@ -1,7 +1,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import TelegramBot from 'node-telegram-bot-api';
-import { getUsdtBrlPrices } from '@/app/actions';
+import { getUsdtBrlPrices, runSimulation } from '@/app/actions';
 import type { Exchange, SimulationResult, ExchangeDetails } from '@/lib/types';
 import { BinanceIcon } from '@/components/icons/binance-icon';
 import { BybitIcon } from '@/components/icons/bybit-icon';
@@ -18,53 +18,17 @@ if (!token) {
 
 const bot = new TelegramBot(token);
 
-const EXCHANGES: Omit<ExchangeDetails, 'icon'>[] = [
-    { name: 'Binance', fee: 0.001 },
-    { name: 'Bybit', fee: 0.001 },
-    { name: 'KuCoin', fee: 0.001 },
-    { name: 'Coinbase', fee: 0.005 },
+const EXCHANGES: ExchangeDetails[] = [
+    { name: 'Binance', fee: 0.001, icon: BinanceIcon },
+    { name: 'Bybit', fee: 0.001, icon: BybitIcon },
+    { name: 'KuCoin', fee: 0.001, icon: KucoinIcon },
+    { name: 'Coinbase', fee: 0.005, icon: CoinbaseIcon },
 ];
-const PICNIC_SELL_FEE = 0.002;
+
 let picnicPrice = 5.25; // Preço padrão, pode ser alterado por comando
 
-// --- Funções de Simulação (adaptadas do client-side) ---
-function runSimulation(amount: number, rates: Exchange[]): SimulationResult[] {
-    return rates.map(exchange => {
-        if (exchange.buyPrice === null) {
-            return {
-                exchangeName: exchange.name,
-                icon: () => null,
-                initialBRL: amount,
-                buyPrice: null,
-                usdtAmount: null,
-                finalBRL: null,
-                profit: null,
-                profitPercentage: null,
-            };
-        }
-
-        const usdtBought = amount / exchange.buyPrice;
-        const usdtAfterFee = usdtBought * (1 - exchange.fee);
-        const brlFromSale = usdtAfterFee * picnicPrice;
-        const finalBRL = brlFromSale * (1 - PICNIC_SELL_FEE);
-        const profit = finalBRL - amount;
-        const profitPercentage = (profit / amount) * 100;
-
-        return {
-            exchangeName: exchange.name,
-            // O ícone não é usado na resposta do Telegram, então usamos um placeholder
-            icon: () => null, 
-            initialBRL: amount,
-            usdtAmount: usdtAfterFee,
-            finalBRL,
-            profit,
-            profitPercentage,
-            buyPrice: exchange.buyPrice,
-        };
-    });
-}
-
-function formatResults(results: SimulationResult[], amount: number): string {
+// --- Funções de Formatação ---
+function formatResults(results: SimulationResult[], amount: number, currentPicnicPrice: number): string {
     if (!results.length) {
         return "Não foi possível obter os resultados da simulação. Tente novamente mais tarde.";
     }
@@ -74,7 +38,7 @@ function formatResults(results: SimulationResult[], amount: number): string {
         .reduce((max, current) => ((current.profit ?? -Infinity) > (max.profit ?? -Infinity) ? current : max), results[0]);
 
     let message = `*Simulação de Arbitragem para ${amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}*\n`;
-    message += `_Preço de venda Picnic: ${picnicPrice.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}_\n\n`;
+    message += `_Preço de venda Picnic: ${currentPicnicPrice.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}_\n\n`;
 
     results.forEach(result => {
         if (result.buyPrice === null || result.profit === null) {
@@ -128,19 +92,18 @@ export async function POST(request: NextRequest) {
 
                 const prices = await getUsdtBrlPrices();
                 if (!prices || prices.length === 0) {
-                    const errorMsg = "❌ Erro: Não foi possível buscar as cotações. A API pode estar indisponível. Tente novamente mais tarde.";
+                    const errorMsg = "❌ Erro: Não foi possível buscar as cotações. As APIs podem estar indisponíveis. Tente novamente mais tarde.";
                     await bot.sendMessage(chatId, errorMsg);
                     return NextResponse.json({ status: 'ok' });
                 }
-
-                const exchangeDataMap = new Map(EXCHANGES.map(e => [e.name, e]));
+                
                 const exchangeRates: Exchange[] = prices.map(price => {
-                    const details = exchangeDataMap.get(price.name);
-                    return details ? { ...details, buyPrice: price.buyPrice, icon: () => null } : null;
+                    const details = EXCHANGES.find(e => e.name === price.name);
+                    return details ? { ...details, buyPrice: price.buyPrice } : null;
                 }).filter((e): e is Exchange => e !== null);
 
-                const results = runSimulation(amount, exchangeRates);
-                const responseMessage = formatResults(results, amount);
+                const results = await runSimulation(amount, exchangeRates, picnicPrice);
+                const responseMessage = formatResults(results, amount, picnicPrice);
                 
                 // Envia a resposta para o usuário que pediu
                 await bot.sendMessage(chatId, responseMessage, { parse_mode: 'Markdown' });

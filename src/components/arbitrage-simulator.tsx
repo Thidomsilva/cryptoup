@@ -8,14 +8,14 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ArrowUpCircle, ArrowDownCircle, Bot, Terminal, ChevronRight, AlertCircle } from 'lucide-react';
-import type { Exchange, SimulationResult, ExchangeDetails, GetCryptoPricesOutput } from '@/lib/types';
+import type { Exchange, SimulationResult, ExchangeDetails } from '@/lib/types';
 import { BinanceIcon } from './icons/binance-icon';
 import { BybitIcon } from './icons/bybit-icon';
 import { KucoinIcon } from './icons/kucoin-icon';
 import { CoinbaseIcon } from './icons/coinbase-icon';
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getUsdtBrlPrices } from "@/app/actions";
+import { getUsdtBrlPrices, runSimulation } from "@/app/actions";
 
 const EXCHANGES: ExchangeDetails[] = [
     { name: 'Binance', fee: 0.001, icon: BinanceIcon },
@@ -23,8 +23,6 @@ const EXCHANGES: ExchangeDetails[] = [
     { name: 'KuCoin', fee: 0.001, icon: KucoinIcon },
     { name: 'Coinbase', fee: 0.005, icon: CoinbaseIcon },
 ];
-
-const PICNIC_SELL_FEE = 0.002;
 
 const ResultsDisplay: FC<{ results: SimulationResult[] }> = ({ results }) => {
     if (results.length === 0) return null;
@@ -170,49 +168,13 @@ export default function ArbitrageSimulator() {
             if (!prices || prices.length === 0) {
                  throw new Error("Could not fetch prices");
             }
-
-            const exchangeDataMap = new Map(EXCHANGES.map(e => [e.name, e]));
-
+            
             const exchangeRates: Exchange[] = prices.map(price => {
-                const details = exchangeDataMap.get(price.name);
-                if (!details) {
-                    return null;
-                }
-                return { ...details, buyPrice: price.buyPrice };
+                const details = EXCHANGES.find(e => e.name === price.name);
+                return details ? { ...details, buyPrice: price.buyPrice } : null;
             }).filter((e): e is Exchange => e !== null);
-
-            const results: SimulationResult[] = exchangeRates.map(exchange => {
-                if (exchange.buyPrice === null) {
-                    return {
-                        exchangeName: exchange.name,
-                        icon: exchange.icon,
-                        initialBRL: amount,
-                        buyPrice: null,
-                        usdtAmount: null,
-                        finalBRL: null,
-                        profit: null,
-                        profitPercentage: null,
-                    };
-                }
-
-                const usdtBought = amount / exchange.buyPrice;
-                const usdtAfterFee = usdtBought * (1 - exchange.fee);
-                const brlFromSale = usdtAfterFee * picnicPrice;
-                const finalBRL = brlFromSale * (1 - PICNIC_SELL_FEE);
-                const profit = finalBRL - amount;
-                const profitPercentage = (profit / amount) * 100;
-
-                return {
-                    exchangeName: exchange.name,
-                    icon: exchange.icon,
-                    initialBRL: amount,
-                    usdtAmount: usdtAfterFee,
-                    finalBRL,
-                    profit,
-                    profitPercentage,
-                    buyPrice: exchange.buyPrice,
-                };
-            });
+            
+            const results = await runSimulation(amount, exchangeRates, picnicPrice);
             
             setHistory(prev => prev.slice(0, -1)); // Remove skeleton
             addHistory(<ResultsDisplay results={results} />);
