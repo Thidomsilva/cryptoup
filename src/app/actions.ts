@@ -14,7 +14,7 @@ function mapExchangeName(apiName: string): ExchangeName | null {
 
 async function getPtaxRate(): Promise<number | null> {
     try {
-        const response = await fetch("https://api.bcb.gov.br/dados/serie/bcdata.sgs.10813/dados/ultimos/1?formato=json");
+        const response = await fetch("https://api.bcb.gov.br/dados/serie/bcdata.sgs.10813/dados/ultimos/1?formato=json", { next: { revalidate: 3600 } });
         if (response.ok) {
             const data = await response.json();
             if (data && data[0] && data[0].valor) {
@@ -31,7 +31,7 @@ async function getPtaxRate(): Promise<number | null> {
 
 async function getBrlToUsdRate(): Promise<number | null> {
     try {
-        const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=usd-coin&vs_currencies=brl');
+        const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=usd-coin&vs_currencies=brl', { next: { revalidate: 60 } });
         if (response.ok) {
             const data = await response.json();
             if (data['usd-coin'] && data['usd-coin'].brl) {
@@ -57,14 +57,13 @@ async function getBrlToUsdRate(): Promise<number | null> {
 
 
 export async function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
+    const allExchangeNames: ExchangeName[] = ['Binance', 'Bybit', 'KuCoin', 'Coinbase'];
     try {
         const [brlToUsdRate, tetherResponse] = await Promise.all([
             getBrlToUsdRate(),
-            fetch('https://api.coingecko.com/api/v3/coins/tether/tickers?per_page=200')
+            fetch('https://api.coingecko.com/api/v3/coins/tether/tickers?per_page=200', { next: { revalidate: 60 } })
         ]);
         
-        const allExchangeNames: ExchangeName[] = ['Binance', 'Bybit', 'KuCoin', 'Coinbase'];
-
         if (!brlToUsdRate) {
             console.error("FATAL: BRL/USD conversion rate is not available. Cannot calculate prices.");
             return allExchangeNames.map(name => ({ name, buyPrice: null }));
@@ -83,7 +82,6 @@ export async function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
             return allExchangeNames.map(name => ({ name, buyPrice: null }));
         }
 
-        
         // Store the best price found for each exchange. Priority is 1 for BRL pairs, 0 for USD pairs.
         const prices: { [K in ExchangeName]?: { price: number, priority: number } } = {};
 
@@ -100,13 +98,13 @@ export async function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
                 let priority = -1; 
 
                 // Prioritize direct BRL pairs. Sanity check for a realistic price.
-                if (ticker.target.toUpperCase() === 'BRL' && ticker.last > 1) {
+                if (ticker.target?.toUpperCase() === 'BRL' && ticker.last > 1) {
                      currentPrice = ticker.last;
                      priority = 1; // Higher priority for direct BRL
                 }
                 // Fallback to USD-based pairs for conversion.
                 // Sanity check to ensure it's a stablecoin pair (price close to 1).
-                else if (ticker.base.toUpperCase() === 'USDT' && ['USDT', 'USD'].includes(ticker.target.toUpperCase()) && ticker.last > 0.9 && ticker.last < 1.1) {
+                else if (ticker.base?.toUpperCase() === 'USDT' && ['USDT', 'USD', 'USDC'].includes(ticker.target?.toUpperCase()) && ticker.last > 0.9 && ticker.last < 1.1) {
                     currentPrice = ticker.last * brlToUsdRate;
                     priority = 0; // Lower priority for converted USD
                 }
@@ -127,14 +125,13 @@ export async function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
         }));
 
         if (finalPrices.every(p => p.buyPrice === null)) {
-            console.error("Could not fetch or calculate any valid USDT prices for any exchange.");
+            console.warn("Could not fetch or calculate any valid USDT prices for any exchange from the received tickers.");
         }
 
         return finalPrices;
 
     } catch (error) {
         console.error('Error fetching or processing cryptocurrency prices:', error);
-        const allExchangeNames: ExchangeName[] = ['Binance', 'Bybit', 'KuCoin', 'Coinbase'];
         return allExchangeNames.map(name => ({ name, buyPrice: null }));
     }
 }
