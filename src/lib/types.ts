@@ -21,3 +21,10 @@ export interface SimulationResult {
   profit: number;
   profitPercentage: number;
 }
+
+export interface ExchangePrice {
+  name: 'Binance' | 'Bybit' | 'KuCoin' | 'Coinbase';
+  buyPrice: number;
+}
+
+export type GetCryptoPricesOutput = ExchangePrice[];

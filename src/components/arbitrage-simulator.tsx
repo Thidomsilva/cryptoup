@@ -8,14 +8,29 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ArrowUpCircle, ArrowDownCircle, Bot, Terminal, ChevronRight } from 'lucide-react';
-import type { Exchange, SimulationResult, ExchangeDetails } from '@/lib/types';
+import type { Exchange, SimulationResult, ExchangeDetails, GetCryptoPricesOutput } from '@/lib/types';
 import { BinanceIcon } from './icons/binance-icon';
 import { BybitIcon } from './icons/bybit-icon';
 import { KucoinIcon } from './icons/kucoin-icon';
 import { CoinbaseIcon } from './icons/coinbase-icon';
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getUsdtBrlPrices } from "@/ai/flows/get-crypto-prices";
+
+// This function is now local to the component
+function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
+    return new Promise(resolve => {
+        // In a real application, you would fetch data from exchange APIs.
+        // For this simulation, we'll generate realistic but random prices.
+        const basePrice = 5.20;
+        const prices: GetCryptoPricesOutput = [
+            { name: 'Binance', buyPrice: basePrice + (Math.random() - 0.5) * 0.05 },
+            { name: 'Bybit', buyPrice: basePrice + (Math.random() - 0.5) * 0.05 },
+            { name: 'KuCoin', buyPrice: basePrice + (Math.random() - 0.5) * 0.05 },
+            { name: 'Coinbase', buyPrice: basePrice + (Math.random() - 0.5) * 0.05 },
+        ];
+        resolve(prices);
+    });
+}
 
 
 const EXCHANGES: ExchangeDetails[] = [
@@ -120,10 +135,20 @@ export default function ArbitrageSimulator() {
     const [isLoading, setIsLoading] = useState(false);
     const { toast } = useToast();
     const scrollAreaRef = useRef<HTMLDivElement>(null);
+    
+    // The prices are now state of the component
+    const [exchangePrices, setExchangePrices] = useState<GetCryptoPricesOutput>([]);
 
     const addHistory = useCallback((component: React.ReactNode) => {
         setHistory(prev => [...prev, { id: Date.now() + Math.random(), component }]);
     }, []);
+
+    // Hydrate the random values on the client
+    useEffect(() => {
+        getUsdtBrlPrices().then(prices => {
+            setExchangePrices(prices);
+        });
+    }, [])
 
     const runCotaP = useCallback(async (amountStr: string) => {
         const amount = parseFloat(amountStr);
@@ -140,7 +165,8 @@ export default function ArbitrageSimulator() {
         addHistory(<LoadingSkeleton />);
 
         try {
-            const prices = await getUsdtBrlPrices();
+            // We use the state that is hydrated on the client
+            const prices = exchangePrices;
 
             const exchangeDataMap = new Map(EXCHANGES.map(e => [e.name, e]));
 
@@ -171,6 +197,9 @@ export default function ArbitrageSimulator() {
                 };
             });
             
+            // Re-fetch prices for next simulation after current one is displayed
+            getUsdtBrlPrices().then(prices => setExchangePrices(prices));
+
             setHistory(prev => prev.slice(0, -1)); // Remove skeleton
             addHistory(<ResultsDisplay results={results} />);
         } catch(error) {
@@ -185,7 +214,7 @@ export default function ArbitrageSimulator() {
             setIsLoading(false);
         }
 
-    }, [picnicPrice, addHistory, toast]);
+    }, [picnicPrice, addHistory, toast, exchangePrices]);
 
     const runSetPicnic = useCallback((priceStr: string) => {
         const price = parseFloat(priceStr);
