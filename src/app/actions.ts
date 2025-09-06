@@ -12,20 +12,23 @@ function mapExchangeName(apiName: string): ExchangeName | null {
     return null;
 }
 
-async function getBrlUsdRate(tickers: any[]): Promise<number | null> {
-    // Try to find a direct USDT/BRL rate from a major exchange first
-    const brlTicker = tickers.find(
-        (ticker: any) => ticker.target === 'BRL' && ticker.market.name.toLowerCase().includes('binance')
-    );
-    if (brlTicker?.converted_last?.brl) {
-        // This is BRL price for 1 USDT, we need BRL price for 1 USD
-        return brlTicker.converted_last.brl / brlTicker.converted_last.usd;
-    }
-    
-    // As a fallback, try to get a general BRL/USD rate from another reliable pair if USDT/BRL is not available
+async function getBrlToUsdRate(): Promise<number | null> {
     try {
+        const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=tether&vs_currencies=brl');
+        if (response.ok) {
+            const data = await response.json();
+            if (data.tether && data.tether.brl) {
+                return data.tether.brl;
+            }
+        }
+    } catch (e) {
+        console.error("Could not fetch BRL/USDT direct rate", e);
+    }
+
+    try {
+        // Fallback to a general USD to BRL rate
         const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=usd&vs_currencies=brl');
-        if(response.ok) {
+        if (response.ok) {
             const data = await response.json();
             if (data.usd && data.usd.brl) {
                 return data.usd.brl;
@@ -34,8 +37,7 @@ async function getBrlUsdRate(tickers: any[]): Promise<number | null> {
     } catch(e) {
         console.error("Could not fetch BRL/USD fallback rate", e);
     }
-
-
+    
     console.warn("Could not find a reliable BRL/USD conversion rate.");
     return null;
 }
@@ -43,14 +45,17 @@ async function getBrlUsdRate(tickers: any[]): Promise<number | null> {
 
 export async function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
     try {
-        const response = await fetch('https://api.coingecko.com/api/v3/coins/tether/tickers');
+        const [brlToUsdRate, tetherResponse] = await Promise.all([
+            getBrlToUsdRate(),
+            fetch('https://api.coingecko.com/api/v3/coins/tether/tickers')
+        ]);
         
-        if (!response.ok) {
-            console.error('Failed to fetch from CoinGecko API:', response.status, response.statusText);
+        if (!tetherResponse.ok) {
+            console.error('Failed to fetch from CoinGecko API:', tetherResponse.status, tetherResponse.statusText);
             return [];
         }
 
-        const data = await response.json();
+        const data = await tetherResponse.json();
         const tickers = data.tickers;
 
         if (!tickers || !Array.isArray(tickers)) {
@@ -58,47 +63,42 @@ export async function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
             return [];
         }
 
-        const brlToUsdRate = await getBrlUsdRate(tickers);
-
         if (!brlToUsdRate) {
             console.error("Fatal: Could not determine BRL/USD conversion rate. Cannot calculate prices.");
-            return [];
+            // Even if rate is missing, try to find direct BRL prices as a last resort
         }
 
         const allExchangeNames: ExchangeName[] = ['Binance', 'Bybit', 'KuCoin', 'Coinbase'];
         const prices: GetCryptoPricesOutput = [];
         const addedExchanges = new Set<ExchangeName>();
 
-        for (const exchangeName of allExchangeNames) {
-            // Find a ticker for the exchange, preferably a USD one as it's most common
-            const usdTicker = tickers.find(
-                (ticker: any) => ticker.target === 'USD' && mapExchangeName(ticker.market.name) === exchangeName
-            );
-
-            if (usdTicker && usdTicker.converted_last?.usd) {
-                 if (!addedExchanges.has(exchangeName)) {
+        // Prioritize direct BRL tickers if available
+        for (const ticker of tickers) {
+            const exchangeName = mapExchangeName(ticker.market.name);
+            if (exchangeName && allExchangeNames.includes(exchangeName) && !addedExchanges.has(exchangeName)) {
+                if (ticker.target === 'BRL' && ticker.converted_last?.brl) {
                     prices.push({
                         name: exchangeName,
-                        buyPrice: usdTicker.converted_last.usd * brlToUsdRate,
+                        buyPrice: ticker.converted_last.brl,
                     });
                     addedExchanges.add(exchangeName);
                 }
-            } else {
-                 // Try to find a BRL ticker as a fallback for this specific exchange
-                 const brlTickerForExchange = tickers.find(
-                    (ticker: any) => ticker.target === 'BRL' && mapExchangeName(ticker.market.name) === exchangeName
-                 );
-                 if (brlTickerForExchange && brlTickerForExchange.converted_last?.brl) {
-                      if (!addedExchanges.has(exchangeName)) {
+            }
+        }
+
+        // For exchanges not found with BRL, use USD tickers and the conversion rate
+        if (brlToUsdRate) {
+            for (const ticker of tickers) {
+                const exchangeName = mapExchangeName(ticker.market.name);
+                 if (exchangeName && allExchangeNames.includes(exchangeName) && !addedExchanges.has(exchangeName)) {
+                    if ((ticker.target === 'USDT' || ticker.target === 'USD') && ticker.converted_last?.usd) {
                         prices.push({
                             name: exchangeName,
-                            buyPrice: brlTickerForExchange.converted_last.brl,
+                            buyPrice: ticker.converted_last.usd * brlToUsdRate,
                         });
                         addedExchanges.add(exchangeName);
                     }
-                 } else {
-                    console.warn(`Could not find a USD or BRL price for ${exchangeName} on CoinGecko.`);
-                 }
+                }
             }
         }
 
