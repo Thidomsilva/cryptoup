@@ -14,6 +14,7 @@ function mapExchangeName(apiName: string): ExchangeName | null {
 
 async function getBrlToUsdRate(): Promise<number | null> {
     try {
+        // First, try to get the direct price of USDT in BRL, which is the most accurate for conversion.
         const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=tether&vs_currencies=brl');
         if (response.ok) {
             const data = await response.json();
@@ -21,24 +22,26 @@ async function getBrlToUsdRate(): Promise<number | null> {
                 return data.tether.brl;
             }
         }
+        console.warn("Could not fetch BRL/USDT direct rate from CoinGecko.");
     } catch (e) {
-        console.error("Could not fetch BRL/USDT direct rate", e);
-    }
-
-    try {
-        // Fallback to a general USD to BRL rate
-        const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=usd&vs_currencies=brl');
-        if (response.ok) {
-            const data = await response.json();
-            if (data.usd && data.usd.brl) {
-                return data.usd.brl;
-            }
-        }
-    } catch(e) {
-        console.error("Could not fetch BRL/USD fallback rate", e);
+        console.error("Error fetching BRL/USDT direct rate:", e);
     }
     
-    console.warn("Could not find a reliable BRL/USD conversion rate.");
+    // Fallback if the direct USDT rate is not available
+    try {
+        const response = await fetch('https://api.coingecko.com/api/v3/exchange_rates');
+         if (response.ok) {
+            const data = await response.json();
+            if (data.rates && data.rates.brl && data.rates.usd) {
+                return data.rates.brl.value / data.rates.usd.value;
+            }
+        }
+        console.warn("Could not fetch BRL/USD fallback rate from CoinGecko exchange_rates.");
+    } catch(e) {
+        console.error("Error fetching BRL/USD fallback rate:", e);
+    }
+
+    console.error("FATAL: Could not determine a reliable BRL/USD conversion rate.");
     return null;
 }
 
@@ -64,15 +67,15 @@ export async function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
         }
 
         if (!brlToUsdRate) {
-            console.error("Fatal: Could not determine BRL/USD conversion rate. Cannot calculate prices.");
-            // Even if rate is missing, try to find direct BRL prices as a last resort
+            // If we absolutely cannot get a conversion rate, we can only rely on direct BRL prices.
+            console.warn("Warning: BRL/USD conversion rate is not available. Only direct BRL prices will be used.");
         }
 
         const allExchangeNames: ExchangeName[] = ['Binance', 'Bybit', 'KuCoin', 'Coinbase'];
         const prices: GetCryptoPricesOutput = [];
         const addedExchanges = new Set<ExchangeName>();
 
-        // Prioritize direct BRL tickers if available
+        // First pass: Prioritize direct BRL tickers if available
         for (const ticker of tickers) {
             const exchangeName = mapExchangeName(ticker.market.name);
             if (exchangeName && allExchangeNames.includes(exchangeName) && !addedExchanges.has(exchangeName)) {
@@ -86,11 +89,12 @@ export async function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
             }
         }
 
-        // For exchanges not found with BRL, use USD tickers and the conversion rate
+        // Second pass: For exchanges not found with a direct BRL pair, use USD tickers and the conversion rate
         if (brlToUsdRate) {
             for (const ticker of tickers) {
                 const exchangeName = mapExchangeName(ticker.market.name);
                  if (exchangeName && allExchangeNames.includes(exchangeName) && !addedExchanges.has(exchangeName)) {
+                    // Use USDT as the primary target, but fall back to USD if needed.
                     if ((ticker.target === 'USDT' || ticker.target === 'USD') && ticker.converted_last?.usd) {
                         prices.push({
                             name: exchangeName,
@@ -103,7 +107,7 @@ export async function getUsdtBrlPrices(): Promise<GetCryptoPricesOutput> {
         }
 
         if (prices.length === 0) {
-            console.error("Could not fetch any quotes from any exchange via CoinGecko.");
+            console.error("Could not fetch any valid USDT/BRL or USDT/USD quotes from the specified exchanges via CoinGecko.");
         }
 
         return prices;
