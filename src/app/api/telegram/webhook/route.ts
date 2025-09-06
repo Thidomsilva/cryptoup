@@ -1,0 +1,172 @@
+
+import { NextRequest, NextResponse } from 'next/server';
+import TelegramBot from 'node-telegram-bot-api';
+import { getUsdtBrlPrices } from '@/app/actions';
+import type { Exchange, SimulationResult, ExchangeDetails } from '@/lib/types';
+import { BinanceIcon } from '@/components/icons/binance-icon';
+import { BybitIcon } from '@/components/icons/bybit-icon';
+import { KucoinIcon } from '@/components/icons/kucoin-icon';
+import { CoinbaseIcon } from '@/components/icons/coinbase-icon';
+
+// --- Configuração ---
+const token = process.env.TELEGRAM_BOT_TOKEN;
+
+if (!token) {
+    throw new Error('O token do Telegram não foi configurado. Por favor, defina TELEGRAM_BOT_TOKEN no seu .env');
+}
+
+const bot = new TelegramBot(token);
+
+const EXCHANGES: Omit<ExchangeDetails, 'icon'>[] = [
+    { name: 'Binance', fee: 0.001 },
+    { name: 'Bybit', fee: 0.001 },
+    { name: 'KuCoin', fee: 0.001 },
+    { name: 'Coinbase', fee: 0.005 },
+];
+const PICNIC_SELL_FEE = 0.002;
+let picnicPrice = 5.25; // Preço padrão, pode ser alterado por comando
+
+// --- Funções de Simulação (adaptadas do client-side) ---
+function runSimulation(amount: number, rates: Exchange[]): SimulationResult[] {
+    return rates.map(exchange => {
+        const usdtBought = amount / exchange.buyPrice;
+        const usdtAfterFee = usdtBought * (1 - exchange.fee);
+        const brlFromSale = usdtAfterFee * picnicPrice;
+        const finalBRL = brlFromSale * (1 - PICNIC_SELL_FEE);
+        const profit = finalBRL - amount;
+        const profitPercentage = (profit / amount) * 100;
+
+        return {
+            exchangeName: exchange.name,
+            // O ícone não é usado na resposta do Telegram, então usamos um placeholder
+            icon: () => null, 
+            initialBRL: amount,
+            usdtAmount: usdtAfterFee,
+            finalBRL,
+            profit,
+            profitPercentage,
+        };
+    });
+}
+
+function formatResults(results: SimulationResult[], amount: number): string {
+    if (!results.length) {
+        return "Não foi possível obter os resultados da simulação. Tente novamente mais tarde.";
+    }
+
+    const bestResult = results.reduce((max, current) => (current.profit > max.profit ? current : max), results[0]);
+
+    let message = `*Simulação de Arbitragem para ${amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}*\n`;
+    message += `_Preço de venda Picnic: ${picnicPrice.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}_\n\n`;
+
+    results.forEach(result => {
+        const isBest = result.exchangeName === bestResult.exchangeName && bestResult.profit > 0;
+        const profitIcon = result.profit > 0 ? '🟢' : '🔴';
+
+        message += `*${result.exchangeName}* ${isBest ? '⭐️ *Melhor Opção*' : ''}\n`;
+        message += `  - Compra USDT por: ${ (result.initialBRL / (result.usdtAmount / (1- (EXCHANGES.find(e=>e.name === result.exchangeName)?.fee || 0)))).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })  }\n`;
+        message += `  - USDT Recebido: ${result.usdtAmount.toFixed(4)}\n`;
+        message += `  - Lucro/Prejuízo: ${profitIcon} *${result.profit.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}* (${result.profitPercentage.toFixed(2)}%)\n\n`;
+    });
+
+    return message;
+}
+
+// --- Handler do Webhook ---
+export async function POST(request: NextRequest) {
+    try {
+        const body = await request.json();
+        const msg = body.message as TelegramBot.Message;
+
+        if (!msg || !msg.text) {
+            return NextResponse.json({ status: 'ok' });
+        }
+
+        const chatId = msg.chat.id;
+        const text = msg.text;
+        const [command, ...args] = text.trim().split(/\s+/);
+
+        switch (command.toLowerCase()) {
+            case '/cotap': {
+                const amount = parseFloat(args[0]);
+                if (isNaN(amount) || amount <= 0) {
+                    await bot.sendMessage(chatId, "Valor inválido. Use, por exemplo: `/cotap 5000`");
+                    return NextResponse.json({ status: 'ok' });
+                }
+
+                await bot.sendMessage(chatId, `🔍 Buscando cotações para ${amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}...`);
+
+                const prices = await getUsdtBrlPrices();
+                if (!prices || prices.length === 0) {
+                    await bot.sendMessage(chatId, "❌ Erro: Não foi possível buscar as cotações. Tente novamente mais tarde.");
+                    return NextResponse.json({ status: 'ok' });
+                }
+
+                const exchangeDataMap = new Map(EXCHANGES.map(e => [e.name, e]));
+                const exchangeRates: Exchange[] = prices.map(price => {
+                    const details = exchangeDataMap.get(price.name);
+                    return details ? { ...details, buyPrice: price.buyPrice, icon: () => null } : null;
+                }).filter((e): e is Exchange => e !== null);
+
+                const results = runSimulation(amount, exchangeRates);
+                const responseMessage = formatResults(results, amount);
+
+                await bot.sendMessage(chatId, responseMessage, { parse_mode: 'Markdown' });
+                break;
+            }
+
+            case '/setpicnic': {
+                const price = parseFloat(args[0]);
+                if (isNaN(price) || price <= 0) {
+                    await bot.sendMessage(chatId, "Preço inválido. Use, por exemplo: `/setpicnic 5.28`");
+                    return NextResponse.json({ status: 'ok' });
+                }
+                picnicPrice = price;
+                await bot.sendMessage(chatId, `✅ Preço de venda na Picnic atualizado para *${price.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}*.`, { parse_mode: 'Markdown' });
+                break;
+            }
+
+            case '/start':
+            case '/help': {
+                const helpMessage = `
+*Bem-vindo ao Bot de Simulação de Arbitragem USDT/BRL!*
+
+Comandos disponíveis:
+- \`/cotap <valor>\`: Simula uma operação de arbitragem com o valor em BRL especificado.
+  _Exemplo: \`/cotap 5000\`_
+  
+- \`/setpicnic <preço>\`: Define o preço de venda do USDT na Picnic para as simulações.
+  _Exemplo: \`/setpicnic 5.28\`_
+
+- \`/help\`: Mostra esta mensagem de ajuda.
+                `;
+                await bot.sendMessage(chatId, helpMessage, { parse_mode: 'Markdown' });
+                break;
+            }
+
+            default:
+                await bot.sendMessage(chatId, `Comando não reconhecido: "${command}". Use /help para ver a lista de comandos.`);
+                break;
+        }
+
+        return NextResponse.json({ status: 'ok' });
+
+    } catch (error) {
+        console.error('Erro no webhook do Telegram:', error);
+        // Retornar uma resposta de sucesso para o Telegram para evitar repetições,
+        // mesmo que o processamento interno falhe.
+        return NextResponse.json({ status: 'error', message: 'Internal server error' });
+    }
+}
+
+// Rota GET para registrar o webhook (chame isso uma vez)
+export async function GET() {
+    try {
+        const webhookUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/telegram/webhook`;
+        await bot.setWebHook(webhookUrl);
+        return NextResponse.json({ success: true, message: `Webhook configurado para ${webhookUrl}` });
+    } catch (error) {
+        console.error('Erro ao configurar o webhook:', error);
+        return NextResponse.json({ success: false, message: 'Falha ao configurar o webhook' });
+    }
+}
