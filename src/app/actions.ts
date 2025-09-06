@@ -6,19 +6,23 @@ import type { GetCryptoPricesOutput, ExchangeName } from '@/lib/types';
 const exchangeApiConfig = {
     Binance: {
         url: 'https://api.binance.com/api/v3/ticker/price?symbol=USDTBRL',
-        getPrice: (data: any) => data.price ? parseFloat(data.price) : null
+        // A API da Binance retorna um objeto direto { symbol, price }
+        getPrice: (data: any) => data?.price ? parseFloat(data.price) : null
     },
     Bybit: {
         url: 'https://api.bybit.com/v5/market/tickers?category=spot&symbol=USDTBRL',
-        getPrice: (data: any) => data.result?.list?.[0]?.lastPrice ? parseFloat(data.result.list[0].lastPrice) : null
+        // A API da Bybit retorna { result: { list: [...] } }
+        getPrice: (data: any) => data?.result?.list?.[0]?.lastPrice ? parseFloat(data.result.list[0].lastPrice) : null
     },
     KuCoin: {
         url: 'https://api.kucoin.com/api/v1/market/orderbook/level1?symbol=USDT-BRL',
-        getPrice: (data: any) => data.data?.price ? parseFloat(data.data.price) : null
+        // A API da KuCoin retorna { data: { price: ... } }
+        getPrice: (data: any) => data?.data?.price ? parseFloat(data.data.price) : null
     },
     Coinbase: {
         url: 'https://api.coinbase.com/v2/prices/USDT-BRL/spot',
-        getPrice: (data: any) => data.data?.amount ? parseFloat(data.data.amount) : null
+        // A API da Coinbase retorna { data: { amount: ... } }
+        getPrice: (data: any) => data?.data?.amount ? parseFloat(data.data.amount) : null
     }
 };
 
@@ -31,7 +35,8 @@ async function fetchPriceFromExchange(exchangeName: ExchangeName): Promise<numbe
 
     try {
         const response = await fetch(config.url, {
-            headers: { 'Accept': 'application/json' },
+            // Algumas APIs podem exigir um User-Agent
+            headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
             next: { revalidate: 30 } // Cache de 30 segundos
         });
 
