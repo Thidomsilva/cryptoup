@@ -5,13 +5,10 @@ import type { Exchange, ExchangeName, SimulationResult, GetCryptoPricesOutput } 
 // Mapeamento de nomes para URLs de API e funções de extração de preço
 const exchangeApiConfig = {
     Binance: {
-        url: 'https://api.binance.com/api/v3/ticker/24hr?symbol=USDTBRL',
+        url: 'https://api.binance.com/api/v3/ticker/price?symbol=USDTBRL',
         getPrice: (data: any): number | null => {
-            if (data && typeof data === 'object' && !Array.isArray(data) && data.lastPrice) {
-                return parseFloat(data.lastPrice);
-            }
-            if (Array.isArray(data) && data.length > 0 && data[0].symbol === 'USDTBRL' && data[0].lastPrice) {
-                return parseFloat(data[0].lastPrice);
+            if (data && data.price) {
+                return parseFloat(data.price);
             }
             return null;
         }
@@ -64,15 +61,20 @@ async function fetchPriceFromExchange(exchangeName: ExchangeName): Promise<numbe
 
     let responseText = '';
     try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout
+
         const response = await fetch(config.url, {
             cache: 'no-store',
             headers: { 
                 'Accept': 'application/json', 
                 'User-Agent': getRandomUserAgent()
             },
-            signal: AbortSignal.timeout(15000)
+            signal: controller.signal
         });
         
+        clearTimeout(timeoutId);
+
         responseText = await response.text();
 
         if (!response.ok) {
@@ -90,7 +92,7 @@ async function fetchPriceFromExchange(exchangeName: ExchangeName): Promise<numbe
 
     } catch (error) {
         if (error instanceof Error) {
-            return `Fetch Error ${exchangeName}: ${error.name} - ${error.message}. Raw text: ${responseText}`;
+            return `Fetch Error ${exchangeName}: ${error.name} - ${error.message}.`;
         }
         return `Unknown error for ${exchangeName}.`;
     }
